@@ -18,6 +18,9 @@ import { useStrobeDetector } from "@/hooks/useStrobeDetector";
 
 
 import { useWakeLock } from "@/hooks/useWakeLock";
+import { useAuth } from "@/hooks/useAuth";
+import { useUserRole } from "@/hooks/useUserRole";
+import AdminPage from "@/features/tuner/AdminPage";
 import PrecisionPage from "@/features/tuner/PrecisionPage";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -38,6 +41,9 @@ const toast: ((msg: string, opts?: { duration?: number }) => void) & {
 );
 
 export default function Home() {
+  const { user, signOut } = useAuth();
+  const { isAdmin, isPro } = useUserRole(user?.id);
+  const [showAdmin, setShowAdmin] = useState(false);
   const [showPrecision, setShowPrecision] = useState(false);
   const [
     userName, setUserName
@@ -286,8 +292,36 @@ export default function Home() {
             <span className="whitespace-nowrap">정밀측정</span>
           </button>
 
+          {/* 관리자 버튼 */}
+          {isAdmin && (
+            <button onClick={() => setShowAdmin(true)}
+              className="shrink-0 w-8 h-8 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-700 flex items-center justify-center transition-colors"
+              title="관리자 대시보드">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+            </button>
+          )}
+
+          {/* 로그아웃 버튼 */}
+          <button onClick={() => signOut()}
+            title={user?.email || '로그아웃'}
+            className="shrink-0 w-8 h-8 rounded-lg bg-muted hover:bg-red-50 hover:text-red-500 flex items-center justify-center transition-colors">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </button>
+
         </div>
       </header>
+
+      {/* 관리자 대시보드 모달 */}
+      {showAdmin && <AdminPage onClose={() => setShowAdmin(false)} />}
 
       {/* 정밀 측정 페이지 (전체 화면 오버레이) */}
       {showPrecision && (
