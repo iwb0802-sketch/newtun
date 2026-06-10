@@ -52,8 +52,8 @@ export default function AuthPage() {
           <div className="w-16 h-16 bg-primary text-primary-foreground rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-primary/25">
             <Music4 className="w-8 h-8" />
           </div>
-          <h1 className="text-2xl font-bold text-foreground">Piano Tuning Scope</h1>
-          <p className="text-sm text-muted-foreground mt-1">피아노 조율 커브 측정기</p>
+          <h1 className="text-2xl font-bold text-foreground">피아노 조율 시험용</h1>
+          <p className="text-sm text-muted-foreground mt-1">Piano Tuning Scope</p>
         </div>
 
         <Card className="shadow-xl">
