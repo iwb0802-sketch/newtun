@@ -42,7 +42,7 @@ const toast: ((msg: string, opts?: { duration?: number }) => void) & {
 
 export default function Home() {
   const { user, signOut } = useAuth();
-  const { isAdmin } = useUserRole(user?.id);
+  const { isAdmin, isPro } = useUserRole(user?.id);
 
   const [showAdmin, setShowAdmin] = useState(false);
   const [showPrecision, setShowPrecision] = useState(false);
@@ -513,10 +513,16 @@ export default function Home() {
                 <div className="flex items-center gap-2 flex-wrap">
                   {/* 마이크 버튼 */}
                   <button
-                    onClick={toggleListening}
+                    onClick={isPro ? toggleListening : () => sonnerToast.error("Pro 이상 등급에서 사용 가능합니다.")}
+                    disabled={!isPro && isListening}
+                    title={!isPro ? "Pro 이상 등급에서 사용 가능합니다" : undefined}
                     className={cn(
                       "flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all duration-150 active:scale-[0.97]",
-                      isListening ? "bg-off hover:bg-off/90 text-white" : "bg-primary hover:bg-primary/90 text-white"
+                      !isPro
+                        ? "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
+                        : isListening
+                          ? "bg-off hover:bg-off/90 text-white"
+                          : "bg-primary hover:bg-primary/90 text-white"
                     )}>
                     {isListening ? (
                       <><span className="w-2 h-2 rounded-full bg-card animate-pulse" />감지 중지</>
@@ -526,7 +532,7 @@ export default function Home() {
                         <path d="M19 10v2a7 7 0 0 1-14 0v-2" fill="none" stroke="currentColor" strokeWidth="2" />
                         <line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" strokeWidth="2" />
                         <line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" strokeWidth="2" />
-                      </svg>마이크 시작</>
+                      </svg>{!isPro ? "마이크 시작 (잠금)" : "마이크 시작"}</>
                     )}
                   </button>
 
