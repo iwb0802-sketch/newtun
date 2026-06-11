@@ -18,7 +18,7 @@ import { useStrobeDetector } from "@/hooks/useStrobeDetector";
 
 
 import { useWakeLock } from "@/hooks/useWakeLock";
-
+import { useAuth } from "@/hooks/useAuth";
 import AdminPage from "@/features/tuner/AdminPage";
 import PrecisionPage from "@/features/tuner/PrecisionPage";
 import { cn } from "@/lib/utils";
@@ -40,6 +40,7 @@ const toast: ((msg: string, opts?: { duration?: number }) => void) & {
 );
 
 export default function Home() {
+  const { user, signOut } = useAuth();
 
   const [showAdmin, setShowAdmin] = useState(false);
   const [showPrecision, setShowPrecision] = useState(false);
@@ -290,7 +291,18 @@ export default function Home() {
             <span className="whitespace-nowrap">정밀측정</span>
           </button>
 
-
+          {/* 로그아웃 버튼 */}
+          <button
+            onClick={() => signOut()}
+            title={user?.email || '로그아웃'}
+            className="shrink-0 w-8 h-8 rounded-lg bg-muted hover:bg-red-50 hover:text-red-500 flex items-center justify-center transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </button>
 
         </div>
       </header>
