@@ -7,12 +7,15 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { usePitchDetector, PIANO_KEYS } from "@/hooks/usePitchDetector";
 import { useStrobeDetector } from "@/hooks/useStrobeDetector";
 import { useWakeLock } from "@/hooks/useWakeLock";
+import { useAuth } from "@/hooks/useAuth";
+import { useUserRole } from "@/hooks/useUserRole";
 import { usePrecisionSession } from "@/hooks/usePrecisionSession";
 import { UPPER_ABS, LOWER_ABS } from "@/lib/tuner/tuningCurveData";
 import TuningCurveChart from "@/components/tuner/TuningCurveChart";
 import StrobeTuner from "@/components/tuner/StrobeTuner";
 import { cn } from "@/lib/utils";
 import { exportToPdf, exportToImage } from "@/lib/tuner/exportPdf";
+import { toast as sonnerToast } from "sonner";
 
 function isInRange(keyIndex: number, cents: number): boolean {
   return cents >= LOWER_ABS[keyIndex] && cents <= UPPER_ABS[keyIndex];
@@ -104,6 +107,8 @@ function PrecisionResultList({ measurements }: { measurements: Record<number, an
 }
 
 export default function PrecisionPage() {
+  const { user } = useAuth();
+  const { isPro } = useUserRole(user?.id);
   const session = usePrecisionSession();
   const {
     activeSession, activeSessionId, createSession, measuredCount,
@@ -325,10 +330,18 @@ export default function PrecisionPage() {
 
             {/* 마이크 */}
             <div className="bg-card border border-border rounded-xl px-4 py-3 flex items-center justify-between shadow-sm">
-              <button onClick={toggleListening}
+              <button
+                onClick={isPro ? toggleListening : () => sonnerToast.error("Pro 이상 등급에서 사용 가능합니다.")}
+                title={!isPro ? "Pro 이상 등급에서 사용 가능합니다" : undefined}
                 className={cn("flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all active:scale-[0.97]",
-                  isListening ? "bg-off text-white" : "bg-precision hover:bg-precision/90 text-white")}>
-                {isListening ? <><span className="w-2 h-2 rounded-full bg-card animate-pulse" />감지 중지</> : <>🎤 마이크 시작</>}
+                  !isPro
+                    ? "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
+                    : isListening
+                      ? "bg-off text-white"
+                      : "bg-precision hover:bg-precision/90 text-white")}>
+                {isListening
+                  ? <><span className="w-2 h-2 rounded-full bg-card animate-pulse" />감지 중지</>
+                  : <>🎤 {!isPro ? "마이크 시작 (잠금)" : "마이크 시작"}</>}
               </button>
               {measuredCount > 0 && (
                 <button onClick={() => { if (confirm("초기화?")) clearAllMeasurements(); }}
