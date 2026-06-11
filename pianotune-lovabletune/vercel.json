@@ -1,9 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "bun install --frozen-lockfile",
-  "buildCommand": "bun run build && node build-spa.js",
-  "outputDirectory": "dist/client",
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+  "buildCommand": "bun run build && node build-spa.js && node build-vercel-output.js",
+  "outputDirectory": ".vercel/output"
 }
