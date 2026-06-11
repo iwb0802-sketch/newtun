@@ -1,13 +1,12 @@
 /**
  * ManualPage.tsx — 수동 조율 페이지
  *
- * 흐름:
- * 1) 상단 [중앙값/하부값/상부값] 버튼으로 구간 선택 (기본: 중앙값, 61→28)
- * 2) 그 아래 ◀ A4(건반49) ▶ — 화살표로 목표 음 이동
- * 3) 사용자가 건반 침 → usePitchDetector 가 안정 감지
- *    - 목표와 다른 건반 → "잘못된 음입니다" 메시지 (그래프에 기록 안 함)
- *    - 목표와 같음 → "일치합니다 +X.X¢", recordMeasurement 호출하여 그래프에 기록
- *      자동 진행이 ON이면 1.2초 후 ▶ 자동 실행
+ * 엔진 분기:
+ *  - keyIndex 0~26 (1~27번): useTargetedStrobe (Goertzel 배음 분석 → 기본음 절대 cent)
+ *  - keyIndex 27~87 (28~88번): usePitchDetector (기존 방식)
+ *
+ * 저장값은 항상 기본음 기준 절대 cent.
+ * stableCents ?? detectedCents 혼합 구조 사용 금지.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -16,6 +15,7 @@ import { toast as sonnerToast } from "sonner";
 
 import TuningCurveChart from "@/components/tuner/TuningCurveChart";
 import { PIANO_KEYS, PitchResult, usePitchDetector } from "@/hooks/usePitchDetector";
+import { useTargetedStrobe } from "@/hooks/useTargetedStrobe";
 import { useTuningSession } from "@/hooks/useTuningSession";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,11 @@ import MatchStatus, { type ManualMatchState } from "./manual/MatchStatus";
 import { useManualSequence } from "./manual/useManualSequence";
 
 const AUTO_ADVANCE_KEY = "manual_auto_advance_v1";
+
+/** keyIndex 0~26 → 저음 구간 (1~27번) → useTargetedStrobe 사용 */
+function isLowRange(keyIndex: number): boolean {
+  return keyIndex <= 26;
+}
 
 export default function ManualPage() {
   const seq = useManualSequence();
@@ -44,7 +49,6 @@ export default function ManualPage() {
   const targetKeyRef = useRef(seq.targetKeyIndex);
   useEffect(() => {
     targetKeyRef.current = seq.targetKeyIndex;
-    // 목표 음이 바뀌면 상태도 리셋
     setMatchState({ kind: "idle" });
   }, [seq.targetKeyIndex]);
 
@@ -68,9 +72,7 @@ export default function ManualPage() {
   const activeSessionIdRef = useRef(activeSessionId);
   useEffect(() => { activeSessionIdRef.current = activeSessionId; }, [activeSessionId]);
 
-  // 다음 음으로 자동 이동 타이머
   const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // 일치 후 안정값 디바운스 (800ms — 자동 모드와 동일)
   const matchedDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingMatchRef = useRef<PitchResult | null>(null);
 
@@ -83,68 +85,96 @@ export default function ManualPage() {
     pendingMatchRef.current = null;
   }, []);
 
-  // 목표 변경/언마운트 시 타이머 정리
   useEffect(() => {
     clearTimers();
     return clearTimers;
   }, [seq.targetKeyIndex, clearTimers]);
 
+  // ─── 세션 보장 헬퍼 ───────────────────────────────────────────────
+  const ensureSession = useCallback(async (): Promise<string | null> => {
+    if (activeSessionIdRef.current) return activeSessionIdRef.current;
+    const s = await createSession();
+    if (s) { activeSessionIdRef.current = s.id; return s.id; }
+    return null;
+  }, [createSession]);
+
+  // ─── 자동 진행 헬퍼 ──────────────────────────────────────────────
+  const scheduleAdvance = useCallback(() => {
+    if (!autoAdvanceRef.current) return;
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+    advanceTimerRef.current = setTimeout(() => {
+      seqNextRef.current();
+    }, 1200);
+  }, []);
+
+  // ─── 기록 + 상태 업데이트 헬퍼 ───────────────────────────────────
+  const commitMeasurement = useCallback(async (keyIndex: number, cents: number, freq: number) => {
+    await ensureSession();
+    recordMeasurement(keyIndex, cents, freq);
+    setMatchState({ kind: "matched", cents });
+    scheduleAdvance();
+  }, [ensureSession, recordMeasurement, scheduleAdvance]);
+
+  // ─── 28~88번: usePitchDetector 콜백 ──────────────────────────────
   const handlePitchDetected = useCallback((result: PitchResult) => {
     if (result.confidence < 0.55) return;
     const target = targetKeyRef.current;
 
+    // 저음 구간은 이 콜백 무시 (useTargetedStrobe가 담당)
+    if (isLowRange(target)) return;
+
     if (result.keyIndex !== target) {
-      // 잘못된 음
       pendingMatchRef.current = null;
-      if (matchedDebounceRef.current) {
-        clearTimeout(matchedDebounceRef.current);
-        matchedDebounceRef.current = null;
-      }
-      setMatchState({
-        kind: "wrong",
-        detectedKeyIndex: result.keyIndex,
-        detectedCents: result.cents,
-      });
+      if (matchedDebounceRef.current) { clearTimeout(matchedDebounceRef.current); matchedDebounceRef.current = null; }
+      setMatchState({ kind: "wrong", detectedKeyIndex: result.keyIndex, detectedCents: result.cents });
       return;
     }
 
-    // 목표와 일치 → 800ms 디바운스로 안정값 확정 후 기록
+    // 목표 일치 → 800ms 디바운스
     pendingMatchRef.current = result;
     if (matchedDebounceRef.current) clearTimeout(matchedDebounceRef.current);
     matchedDebounceRef.current = setTimeout(() => {
       const p = pendingMatchRef.current;
-      if (!p) return;
-      if (p.keyIndex !== targetKeyRef.current) return;
-
-      // 세션 보장
-      if (!activeSessionIdRef.current) {
-        createSession().then((s) => {
-          if (s) {
-            activeSessionIdRef.current = s.id;
-            recordMeasurement(p.keyIndex, p.cents, p.frequency);
-          }
-        });
-      } else {
-        recordMeasurement(p.keyIndex, p.cents, p.frequency);
-      }
-
-      setMatchState({ kind: "matched", cents: p.cents });
+      if (!p || p.keyIndex !== targetKeyRef.current) return;
+      // 절대 cent 그대로 저장 (usePitchDetector는 이미 절대 cent 반환)
+      commitMeasurement(p.keyIndex, p.cents, p.frequency);
       pendingMatchRef.current = null;
-
-      // 자동 진행
-      if (autoAdvanceRef.current) {
-        if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
-        advanceTimerRef.current = setTimeout(() => {
-          seqNextRef.current();
-        }, 1200);
-      }
     }, 800);
-  }, [recordMeasurement, createSession]);
+  }, [commitMeasurement]);
 
   const { isListening, startListening, stopListening, error, stream, audioContext } =
     usePitchDetector(handlePitchDetected, 4096);
 
   useWakeLock(isListening);
+
+  // ─── 1~27번: useTargetedStrobe ────────────────────────────────────
+  // 저음 구간일 때만 targetKeyIndex를 전달, 아니면 null
+  const strobeTarget = isLowRange(seq.targetKeyIndex) ? seq.targetKeyIndex : null;
+  const strobe = useTargetedStrobe(
+    isListening ? stream : null,
+    isListening ? audioContext : null,
+    strobeTarget,
+    { stableDurationMs: 800, fftSize: 4096 }
+  );
+
+  // strobeCents가 새로 확정되면 기록
+  const prevStrobeCentsRef = useRef<number | null>(null);
+  useEffect(() => {
+    const c = strobe.strobeCents;
+    if (c === null || c === prevStrobeCentsRef.current) return;
+    if (!isLowRange(targetKeyRef.current)) return;
+
+    prevStrobeCentsRef.current = c;
+    const keyIndex = targetKeyRef.current;
+    const freq = PIANO_KEYS[keyIndex]?.freq ?? 0;
+    // 절대 cent 저장 (useTargetedStrobe가 이미 기본음 기준 절대 cent 반환)
+    commitMeasurement(keyIndex, c, freq);
+  }, [strobe.strobeCents, commitMeasurement]);
+
+  // 목표 음 변경 시 strobe prev 초기화
+  useEffect(() => {
+    prevStrobeCentsRef.current = null;
+  }, [seq.targetKeyIndex]);
 
   const toggleListening = async () => {
     if (!activeSessionIdRef.current) {
@@ -156,6 +186,20 @@ export default function ManualPage() {
   };
 
   const targetKey = PIANO_KEYS[seq.targetKeyIndex];
+  const isLow = isLowRange(seq.targetKeyIndex);
+
+  // 저음 구간 상태 표시용
+  const strobeMatchState: ManualMatchState = (() => {
+    if (!isLow) return matchState;
+    if (!isListening) return { kind: "idle" };
+    if (!strobe.signalOk) return { kind: "idle" };
+    if (strobe.isCapturing) return { kind: "idle" };
+    if (strobe.strobeCents !== null) return { kind: "matched", cents: strobe.strobeCents };
+    if (strobe.liveCents !== null) return { kind: "matched", cents: strobe.liveCents };
+    return { kind: "idle" };
+  })();
+
+  const displayMatchState = isLow ? strobeMatchState : matchState;
 
   return (
     <div
@@ -174,7 +218,11 @@ export default function ManualPage() {
           </div>
           <div>
             <h1 className="text-base font-bold text-foreground leading-tight">수동 조율</h1>
-            <p className="text-xs text-muted-foreground/80">목표 음 → 건반 → 기록</p>
+            <p className="text-xs text-muted-foreground/80">
+              {isLow
+                ? `저음 스트로브 모드 (1~27번) · 배음 ${strobe.partial ?? "?"}배`
+                : "목표 음 → 건반 → 기록"}
+            </p>
           </div>
         </div>
 
@@ -207,6 +255,36 @@ export default function ManualPage() {
           onNext={seq.next}
         />
 
+        {/* 저음 구간: 스트로브 진행 표시 */}
+        {isLow && isListening && (
+          <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-sm">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-medium text-muted-foreground">
+                스트로브 분석 ({strobe.analysisFreq ? `${strobe.analysisFreq.toFixed(1)} Hz` : "—"})
+              </span>
+              <span className={cn(
+                "text-xs font-bold px-2 py-0.5 rounded-full",
+                strobe.signalOk ? "bg-green-100 text-green-700" : "bg-muted text-muted-foreground"
+              )}>
+                {strobe.signalOk ? "신호 감지" : "신호 없음"}
+              </span>
+            </div>
+            {strobe.isCapturing && (
+              <div className="w-full bg-muted rounded-full h-1.5 mt-1">
+                <div
+                  className="bg-primary h-1.5 rounded-full transition-all"
+                  style={{ width: `${strobe.captureProgress * 100}%` }}
+                />
+              </div>
+            )}
+            {strobe.liveCents !== null && (
+              <p className="text-sm font-bold text-foreground mt-1">
+                실시간: {strobe.liveCents > 0 ? "+" : ""}{strobe.liveCents.toFixed(1)}¢
+              </p>
+            )}
+          </div>
+        )}
+
         {/* 마이크 + 자동 진행 토글 */}
         <div className="flex items-center gap-2">
           <button
@@ -238,7 +316,7 @@ export default function ManualPage() {
         )}
 
         {/* 상태 메시지 */}
-        <MatchStatus state={matchState} isListening={isListening} />
+        <MatchStatus state={displayMatchState} isListening={isListening} />
 
         {/* 그래프 */}
         <div className="bg-card border border-border rounded-xl p-2 shadow-sm">
