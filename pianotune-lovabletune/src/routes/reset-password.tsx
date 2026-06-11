@@ -4,10 +4,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/reset-password")({
-  ssr: false,
-  head: () => ({
-    meta: [{ title: "비밀번호 재설정 — Piano Tuning Scope" }],
-  }),
   component: ResetPasswordPage,
 });
 

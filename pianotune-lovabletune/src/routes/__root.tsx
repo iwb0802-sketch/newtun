@@ -1,17 +1,11 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
 import {
   Outlet,
   Link,
   createRootRouteWithContext,
   useRouter,
-  HeadContent,
-  Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
-import { Toaster } from "sonner";
-
-import appCss from "../styles.css?url";
-import { reportLovableError } from "../lib/lovable-error-reporting";
+import { useEffect } from "react";
 
 function NotFoundComponent() {
   return (
@@ -38,8 +32,9 @@ function NotFoundComponent() {
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error(error);
   const router = useRouter();
+
   useEffect(() => {
-    reportLovableError(error, { boundary: "tanstack_root_error_component" });
+    console.error("[Root Error Boundary]", error);
   }, [error]);
 
   return (
@@ -74,58 +69,11 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 }
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
-  head: () => ({
-    meta: [
-      { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "피아노 조율 시험용" },
-      { name: "description", content: "피아노 조율 시험용 — 실시간 피치 감지, 스트로보 튜너, 88건반 조율 곡선 시각화" },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "피아노 조율 시험용" },
-      { property: "og:description", content: "피아노 조율 시험용" },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-      { name: "twitter:site", content: "@Lovable" },
-      { name: "twitter:title", content: "피아노 조율 시험용" },
-      { name: "twitter:description", content: "피아노 조율 시험용" },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/fe542297-b6f5-4cdf-9130-fe7ceac4cfc8/id-preview-ab550970--b20f6d88-b8ed-4cb5-81da-84a65617e250.lovable.app-1780969780023.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/fe542297-b6f5-4cdf-9130-fe7ceac4cfc8/id-preview-ab550970--b20f6d88-b8ed-4cb5-81da-84a65617e250.lovable.app-1780969780023.png" },
-    ],
-    links: [
-      {
-        rel: "stylesheet",
-        href: appCss,
-      },
-    ],
-  }),
-  shellComponent: RootShell,
   component: RootComponent,
   notFoundComponent: NotFoundComponent,
   errorComponent: ErrorComponent,
 });
 
-function RootShell({ children }: { children: ReactNode }) {
-  return (
-    <html lang="en">
-      <head>
-        <HeadContent />
-      </head>
-      <body>
-        {children}
-        <Scripts />
-      </body>
-    </html>
-  );
-}
-
 function RootComponent() {
-  const { queryClient } = Route.useRouteContext();
-
-  return (
-    <QueryClientProvider client={queryClient}>
-      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
-      <Toaster richColors position="top-center" />
-    </QueryClientProvider>
-  );
+  return <Outlet />;
 }
