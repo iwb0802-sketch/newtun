@@ -51,53 +51,39 @@ function medianOf(arr: number[]): number {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-function subPhase(
-  buf: Float32Array,
-  start: number,
-  len: number,
-  sr: number,
-  fEval: number
-): number {
-  return goertzel(buf.subarray(start, start + len), sr, fEval).phase;
-}
-
-function inblockFreq(
-  buf: Float32Array,
-  sr: number,
-  fEval: number
-): number {
-  const N = buf.length;
-  const h = Math.max(8, Math.round(sr / fEval));
-  const L = N - h;
-
-  if (L < 64) return fEval;
-
-  const p0 = subPhase(buf, 0, L, sr, fEval);
-  const p1 = subPhase(buf, h, L, sr, fEval);
-
-  const dphi = wrapPi(
-    p1 - p0 - (2 * Math.PI * fEval * h) / sr
-  );
-
-  return fEval + (dphi * sr) / (2 * Math.PI * h);
-}
-
+/**
+ * targetFreq ±1반음 범위를 Goertzel magnitude로 스캔하여
+ * 가장 magnitude가 큰 주파수를 반환.
+ *
+ * 위상 기반 inblockFreq 방식 대신 사용 — 저음 배음 분석 시
+ * 위상 추정이 인접 배음으로 튀는 문제를 방지.
+ *
+ * 스캔 범위: fTarget × 2^(-1/12) ~ fTarget × 2^(+1/12)
+ * 스캔 스텝: 5센트 단위
+ */
 function coarseFreq(
   buf: Float32Array,
   sr: number,
   fTarget: number
 ): number {
-  const fc = inblockFreq(buf, sr, fTarget);
+  // ±1반음 = ±100cent, 5cent 스텝 → 41개 포인트
+  const STEP_CENTS = 5;
+  const RANGE_CENTS = 100;
+  const steps = Math.round(RANGE_CENTS / STEP_CENTS);
 
-  if (
-    !Number.isFinite(fc) ||
-    fc < fTarget * 0.5 ||
-    fc > fTarget * 2
-  ) {
-    return fTarget;
+  let bestFreq = fTarget;
+  let bestMag = -1;
+
+  for (let i = -steps; i <= steps; i++) {
+    const f = fTarget * Math.pow(2, (i * STEP_CENTS) / 1200);
+    const mag = goertzel(buf, sr, f).magnitude;
+    if (mag > bestMag) {
+      bestMag = mag;
+      bestFreq = f;
+    }
   }
 
-  return inblockFreq(buf, sr, fc);
+  return bestFreq;
 }
 
 /**
