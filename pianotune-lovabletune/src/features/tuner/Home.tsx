@@ -19,6 +19,7 @@ import { useStrobeDetector } from "@/hooks/useStrobeDetector";
 
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useAuth } from "@/hooks/useAuth";
+import { useUserRole } from "@/hooks/useUserRole";
 import AdminPage from "@/features/tuner/AdminPage";
 import PrecisionPage from "@/features/tuner/PrecisionPage";
 import { cn } from "@/lib/utils";
@@ -41,6 +42,7 @@ const toast: ((msg: string, opts?: { duration?: number }) => void) & {
 
 export default function Home() {
   const { user, signOut } = useAuth();
+  const { isAdmin } = useUserRole(user?.id);
 
   const [showAdmin, setShowAdmin] = useState(false);
   const [showPrecision, setShowPrecision] = useState(false);
@@ -290,6 +292,23 @@ export default function Home() {
             </svg>
             <span className="whitespace-nowrap">정밀측정</span>
           </button>
+
+          {/* 관리자 버튼 */}
+          {isAdmin && (
+            <button
+              onClick={() => setShowAdmin(true)}
+              title="관리자 대시보드"
+              className="shrink-0 w-8 h-8 rounded-lg bg-muted hover:bg-primary/10 hover:text-primary flex items-center justify-center transition-colors"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z"/>
+                <path d="M12 8v4l3 3"/>
+                <circle cx="12" cy="12" r="1" fill="currentColor"/>
+                <path d="M4.93 4.93l14.14 14.14M4.93 19.07L19.07 4.93" strokeWidth="0"/>
+                <path d="M9 12h6M12 9v6"/>
+              </svg>
+            </button>
+          )}
 
           {/* 로그아웃 버튼 */}
           <button
