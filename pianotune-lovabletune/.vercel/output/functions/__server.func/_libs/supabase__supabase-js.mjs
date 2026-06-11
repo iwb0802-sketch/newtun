@@ -3,7 +3,7 @@ import { R as RealtimeClient } from "./supabase__realtime-js.mjs";
 import { S as StorageClient } from "./supabase__storage-js.mjs";
 import { A as AuthClient } from "./supabase__auth-js.mjs";
 import { F as FunctionsClient } from "./supabase__functions-js.mjs";
-const version = "2.108.0";
+const version = "2.107.0";
 let JS_ENV = "";
 let JS_RUNTIME_VERSION;
 if (typeof Deno !== "undefined") {

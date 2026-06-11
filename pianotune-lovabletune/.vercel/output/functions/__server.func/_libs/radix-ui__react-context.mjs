@@ -1,7 +1,6 @@
 import { r as reactExports, j as jsxRuntimeExports } from "./react.mjs";
 function createContext2(rootComponentName, defaultContext) {
   const Context = reactExports.createContext(defaultContext);
-  Context.displayName = rootComponentName + "Context";
   const Provider = (props) => {
     const { children, ...context } = props;
     const value = reactExports.useMemo(() => context, Object.values(context));
@@ -20,7 +19,6 @@ function createContextScope(scopeName, createContextScopeDeps = []) {
   let defaultContexts = [];
   function createContext3(rootComponentName, defaultContext) {
     const BaseContext = reactExports.createContext(defaultContext);
-    BaseContext.displayName = rootComponentName + "Context";
     const index = defaultContexts.length;
     defaultContexts = [...defaultContexts, defaultContext];
     const Provider = (props) => {

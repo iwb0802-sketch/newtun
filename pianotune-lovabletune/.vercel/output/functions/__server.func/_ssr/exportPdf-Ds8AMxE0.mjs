@@ -1,4 +1,4 @@
-import { r as reactExports, c as jsxDevRuntimeExports } from "../_libs/react.mjs";
+import { r as reactExports, j as jsxRuntimeExports } from "../_libs/react.mjs";
 import { c as clsx } from "../_libs/clsx.mjs";
 import { t as twMerge } from "../_libs/tailwind-merge.mjs";
 const A0_FREQ = 27.5;
@@ -105,6 +105,37 @@ function targetPartial(keyIndex) {
   if (keyIndex < 24) return 4;
   if (keyIndex < 36) return 2;
   return 1;
+}
+function goertzel(buf, sr, targetFreq) {
+  const N = buf.length;
+  const k = N * targetFreq / sr;
+  const w = 2 * Math.PI * k / N;
+  const cosW = Math.cos(w);
+  const sinW = Math.sin(w);
+  const coeff = 2 * cosW;
+  let q0 = 0, q1 = 0, q2 = 0;
+  for (let i = 0; i < N; i++) {
+    q0 = coeff * q1 - q2 + buf[i];
+    q2 = q1;
+    q1 = q0;
+  }
+  const real = q1 - q2 * cosW;
+  const imag = q2 * sinW;
+  return {
+    real,
+    imag,
+    magnitude: Math.sqrt(real * real + imag * imag) / N,
+    phase: Math.atan2(imag, real)
+  };
+}
+function centsFromPhaseDelta(prevPhase, currPhase, dtSec, targetFreq) {
+  let dp = currPhase - prevPhase;
+  while (dp > Math.PI) dp -= 2 * Math.PI;
+  while (dp < -Math.PI) dp += 2 * Math.PI;
+  const freqDelta = dp / (2 * Math.PI * dtSec);
+  const actual = targetFreq + freqDelta;
+  if (actual <= 0) return 0;
+  return 1200 * Math.log2(actual / targetFreq);
 }
 const PIANO_KEYS = Array.from({ length: 88 }, (_, i) => {
   const midi = i + 21;
@@ -694,53 +725,25 @@ function TuningCurveChart({ data, activeKeyIndex, showStrobeOnly = false }) {
     }
   }
   const keyXInView = (rawX) => rawX;
-  return /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("div", { className: "w-full relative select-none overflow-x-auto", children: [
-    /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("div", { className: "flex items-center justify-between mb-1.5 px-0.5", children: [
-      /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("span", { className: "text-xs text-gray-300", children: isZoomed ? `${Math.round(1 / (xView.end - xView.start))}× 확대 중` : "휘/핀치로 확대" }, void 0, false, {
-        fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-        lineNumber: 254,
-        columnNumber: 9
-      }, this),
-      isZoomed && /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV(
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-full relative select-none overflow-x-auto", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between mb-1.5 px-0.5", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-gray-300", children: isZoomed ? `${Math.round(1 / (xView.end - xView.start))}× 확대 중` : "휘/핀치로 확대" }),
+      isZoomed && /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "button",
         {
           onClick: () => setXView({ start: 0, end: 1 }),
           className: "flex items-center gap-1 px-2.5 py-1 bg-muted border border-border rounded-lg text-xs text-muted-foreground hover:bg-muted/80 transition-colors",
           children: [
-            /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("svg", { width: "11", height: "11", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
-              /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("path", { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" }, void 0, false, {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 263,
-                columnNumber: 15
-              }, this),
-              /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("path", { d: "M3 3v5h5" }, void 0, false, {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 264,
-                columnNumber: 15
-              }, this)
-            ] }, void 0, true, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 262,
-              columnNumber: 13
-            }, this),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "11", height: "11", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M3 3v5h5" })
+            ] }),
             "전체 보기"
           ]
-        },
-        void 0,
-        true,
-        {
-          fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-          lineNumber: 258,
-          columnNumber: 11
-        },
-        this
+        }
       )
-    ] }, void 0, true, {
-      fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-      lineNumber: 253,
-      columnNumber: 7
-    }, this),
-    /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV(
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "svg",
       {
         ref: svgRef,
@@ -766,44 +769,16 @@ function TuningCurveChart({ data, activeKeyIndex, showStrobeOnly = false }) {
         },
         onTouchEnd: handleTouchEnd,
         children: [
-          /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("rect", { width: SVG_W, height: SVG_H, fill: "white" }, void 0, false, {
-            fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-            lineNumber: 300,
-            columnNumber: 9
-          }, this),
-          /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { transform: `translate(${PAD.left},${PAD.top})`, children: [
-            /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("defs", { children: /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("clipPath", { id: "plotClip", children: /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("rect", { x: 0, y: -30, width: PW, height: SVG_H }, void 0, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 306,
-              columnNumber: 15
-            }, this) }, void 0, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 305,
-              columnNumber: 13
-            }, this) }, void 0, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 304,
-              columnNumber: 11
-            }, this),
-            yMinor.map((c) => /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("line", { x1: 0, y1: yOf(c), x2: PW, y2: yOf(c), stroke: "#d1d5db", strokeWidth: 0.3 }, `ym${c}`, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 312,
-              columnNumber: 13
-            }, this)),
-            /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { clipPath: "url(#plotClip)", children: Array.from({ length: 88 }, (_, i) => {
+          /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { width: SVG_W, height: SVG_H, fill: "white" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { transform: `translate(${PAD.left},${PAD.top})`, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("defs", { children: /* @__PURE__ */ jsxRuntimeExports.jsx("clipPath", { id: "plotClip", children: /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: 0, y: -30, width: PW, height: SVG_H }) }) }),
+            yMinor.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: 0, y1: yOf(c), x2: PW, y2: yOf(c), stroke: "#d1d5db", strokeWidth: 0.3 }, `ym${c}`)),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("g", { clipPath: "url(#plotClip)", children: Array.from({ length: 88 }, (_, i) => {
               const x = xOf(i);
               if (x < -5 || x > PW + 5) return null;
-              return /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("line", { x1: x, y1: 0, x2: x, y2: PH, stroke: "#e5e7eb", strokeWidth: 0.25 }, `xm${i}`, false, {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 320,
-                columnNumber: 22
-              }, this);
-            }) }, void 0, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 316,
-              columnNumber: 11
-            }, this),
-            yMajor.map((c) => /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV(
+              return /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: x, y1: 0, x2: x, y2: PH, stroke: "#e5e7eb", strokeWidth: 0.25 }, `xm${i}`);
+            }) }),
+            yMajor.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsx(
               "line",
               {
                 x1: 0,
@@ -813,88 +788,25 @@ function TuningCurveChart({ data, activeKeyIndex, showStrobeOnly = false }) {
                 stroke: c === 0 ? "#374151" : "#9ca3af",
                 strokeWidth: c === 0 ? 1.2 : 0.6
               },
-              `yM${c}`,
-              false,
-              {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 326,
-                columnNumber: 13
-              },
-              this
+              `yM${c}`
             )),
-            /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("rect", { x: 0, y: 0, width: PW, height: PH, fill: "none", stroke: "#374151", strokeWidth: 1 }, void 0, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 331,
-              columnNumber: 11
-            }, this),
-            /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { clipPath: "url(#plotClip)", children: [
-              /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("path", { d: stepPath.upper, fill: "none", stroke: "#1f2937", strokeWidth: 1.4 }, void 0, false, {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 335,
-                columnNumber: 13
-              }, this),
-              /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("path", { d: stepPath.lower, fill: "none", stroke: "#1f2937", strokeWidth: 1.4 }, void 0, false, {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 336,
-                columnNumber: 13
-              }, this)
-            ] }, void 0, true, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 334,
-              columnNumber: 11
-            }, this),
-            yMajor.map((c) => /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { children: [
-              /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("line", { x1: -4, y1: yOf(c), x2: 0, y2: yOf(c), stroke: "#374151", strokeWidth: 1 }, void 0, false, {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 342,
-                columnNumber: 15
-              }, this),
-              /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("text", { x: -7, y: yOf(c) + 3.5, textAnchor: "end", fontSize: 9, fill: "#374151", children: c > 0 ? `+${c}` : c }, void 0, false, {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 343,
-                columnNumber: 15
-              }, this)
-            ] }, `yl${c}`, true, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 341,
-              columnNumber: 13
-            }, this)),
-            yMinor.map((c) => /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("line", { x1: -2, y1: yOf(c), x2: 0, y2: yOf(c), stroke: "#6b7280", strokeWidth: 0.6 }, `ylt${c}`, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 349,
-              columnNumber: 13
-            }, this)),
-            yMajor.map((c) => /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { children: [
-              /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("line", { x1: PW, y1: yOf(c), x2: PW + 4, y2: yOf(c), stroke: "#374151", strokeWidth: 1 }, void 0, false, {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 355,
-                columnNumber: 15
-              }, this),
-              /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("text", { x: PW + 7, y: yOf(c) + 3.5, textAnchor: "start", fontSize: 9, fill: "#374151", children: c > 0 ? `+${c}` : c }, void 0, false, {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 356,
-                columnNumber: 15
-              }, this)
-            ] }, `yr${c}`, true, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 354,
-              columnNumber: 13
-            }, this)),
-            yMinor.map((c) => /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("line", { x1: PW, y1: yOf(c), x2: PW + 2, y2: yOf(c), stroke: "#6b7280", strokeWidth: 0.6 }, `yrt${c}`, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 362,
-              columnNumber: 13
-            }, this)),
-            /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { clipPath: "url(#plotClip)", children: xLabels.map((kn) => /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("text", { x: xOf(kn - 1), y: PH + 10, textAnchor: "middle", fontSize: 7.5, fill: "#6b7280", children: kn }, `xl${kn}`, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 368,
-              columnNumber: 15
-            }, this)) }, void 0, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 366,
-              columnNumber: 11
-            }, this),
-            /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { clipPath: "url(#plotClip)", children: A_INDICES$1.map((ki) => /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV(
+            /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: 0, y: 0, width: PW, height: PH, fill: "none", stroke: "#374151", strokeWidth: 1 }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { clipPath: "url(#plotClip)", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: stepPath.upper, fill: "none", stroke: "#1f2937", strokeWidth: 1.4 }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: stepPath.lower, fill: "none", stroke: "#1f2937", strokeWidth: 1.4 })
+            ] }),
+            yMajor.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: -4, y1: yOf(c), x2: 0, y2: yOf(c), stroke: "#374151", strokeWidth: 1 }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("text", { x: -7, y: yOf(c) + 3.5, textAnchor: "end", fontSize: 9, fill: "#374151", children: c > 0 ? `+${c}` : c })
+            ] }, `yl${c}`)),
+            yMinor.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: -2, y1: yOf(c), x2: 0, y2: yOf(c), stroke: "#6b7280", strokeWidth: 0.6 }, `ylt${c}`)),
+            yMajor.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: PW, y1: yOf(c), x2: PW + 4, y2: yOf(c), stroke: "#374151", strokeWidth: 1 }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("text", { x: PW + 7, y: yOf(c) + 3.5, textAnchor: "start", fontSize: 9, fill: "#374151", children: c > 0 ? `+${c}` : c })
+            ] }, `yr${c}`)),
+            yMinor.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: PW, y1: yOf(c), x2: PW + 2, y2: yOf(c), stroke: "#6b7280", strokeWidth: 0.6 }, `yrt${c}`)),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("g", { clipPath: "url(#plotClip)", children: xLabels.map((kn) => /* @__PURE__ */ jsxRuntimeExports.jsx("text", { x: xOf(kn - 1), y: PH + 10, textAnchor: "middle", fontSize: 7.5, fill: "#6b7280", children: kn }, `xl${kn}`)) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("g", { clipPath: "url(#plotClip)", children: A_INDICES$1.map((ki) => /* @__PURE__ */ jsxRuntimeExports.jsx(
               "line",
               {
                 x1: xOf(ki),
@@ -906,43 +818,16 @@ function TuningCurveChart({ data, activeKeyIndex, showStrobeOnly = false }) {
                 strokeDasharray: "4,3",
                 opacity: 0.7
               },
-              `av${ki}`,
-              false,
-              {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 375,
-                columnNumber: 15
-              },
-              this
-            )) }, void 0, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 373,
-              columnNumber: 11
-            }, this),
-            /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { clipPath: "url(#plotClip)", children: A_INDICES$1.map((ki) => {
+              `av${ki}`
+            )) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("g", { clipPath: "url(#plotClip)", children: A_INDICES$1.map((ki) => {
               const x = xOf(ki);
-              return /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { children: [
-                /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("line", { x1: x, y1: -18, x2: x, y2: 0, stroke: "#374151", strokeWidth: 1.2 }, void 0, false, {
-                  fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                  lineNumber: 388,
-                  columnNumber: 19
-                }, this),
-                /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("text", { x, y: -20, textAnchor: "middle", fontSize: 9, fill: "#374151", fontWeight: "700", children: "A" }, void 0, false, {
-                  fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                  lineNumber: 389,
-                  columnNumber: 19
-                }, this)
-              ] }, `a${ki}`, true, {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 387,
-                columnNumber: 17
-              }, this);
-            }) }, void 0, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 383,
-              columnNumber: 11
-            }, this),
-            activeKeyIndex != null && /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV(
+              return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: x, y1: -18, x2: x, y2: 0, stroke: "#374151", strokeWidth: 1.2 }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("text", { x, y: -20, textAnchor: "middle", fontSize: 9, fill: "#374151", fontWeight: "700", children: "A" })
+              ] }, `a${ki}`);
+            }) }),
+            activeKeyIndex != null && /* @__PURE__ */ jsxRuntimeExports.jsx(
               "line",
               {
                 x1: xOf(activeKeyIndex),
@@ -953,17 +838,9 @@ function TuningCurveChart({ data, activeKeyIndex, showStrobeOnly = false }) {
                 strokeWidth: 1,
                 strokeDasharray: "4,3",
                 opacity: 0.6
-              },
-              void 0,
-              false,
-              {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 397,
-                columnNumber: 13
-              },
-              this
+              }
             ),
-            !showStrobeOnly && /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { clipPath: "url(#plotClip)", children: data.map((d) => {
+            !showStrobeOnly && /* @__PURE__ */ jsxRuntimeExports.jsx("g", { clipPath: "url(#plotClip)", children: data.map((d) => {
               if (d.cents === null) return null;
               const cx = xOf(d.keyIndex);
               const cy = yOf(d.cents);
@@ -971,7 +848,7 @@ function TuningCurveChart({ data, activeKeyIndex, showStrobeOnly = false }) {
               const inRange = d.cents >= LOWER_ABS[d.keyIndex] && d.cents <= UPPER_ABS[d.keyIndex];
               const fill = isActive ? "#ef4444" : inRange ? "#1e3a5f" : "#dc2626";
               const r = isActive ? 5 : 3.5;
-              return /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV(
+              return /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "circle",
                 {
                   cx,
@@ -981,55 +858,28 @@ function TuningCurveChart({ data, activeKeyIndex, showStrobeOnly = false }) {
                   stroke: isActive ? "#fca5a5" : "none",
                   strokeWidth: isActive ? 2 : 0,
                   opacity: 0.92,
-                  children: /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("title", { children: `[자동] 건반 ${d.keyNumber} (${d.noteName}${d.octave}): ${d.cents > 0 ? "+" : ""}${d.cents.toFixed(1)}¢` }, void 0, false, {
-                    fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                    lineNumber: 414,
-                    columnNumber: 19
-                  }, this)
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `[자동] 건반 ${d.keyNumber} (${d.noteName}${d.octave}): ${d.cents > 0 ? "+" : ""}${d.cents.toFixed(1)}¢` })
                 },
-                `auto-${d.keyIndex}`,
-                false,
-                {
-                  fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                  lineNumber: 412,
-                  columnNumber: 17
-                },
-                this
+                `auto-${d.keyIndex}`
               );
-            }) }, void 0, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 402,
-              columnNumber: 32
-            }, this),
-            /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { clipPath: "url(#plotClip)", children: data.map((d) => {
+            }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("g", { clipPath: "url(#plotClip)", children: data.map((d) => {
               if (!d.strobeCents) return null;
               const cx = xOf(d.keyIndex);
               const cy = yOf(d.strobeCents);
               const inRange = d.strobeCents >= LOWER_ABS[d.keyIndex] && d.strobeCents <= UPPER_ABS[d.keyIndex];
               const fill = inRange ? "#d97706" : "#f97316";
-              return /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { children: [
-                /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV(
+              return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
                   "polygon",
                   {
                     points: `${cx},${cy - 5} ${cx + 4.5},${cy + 3} ${cx - 4.5},${cy + 3}`,
                     fill,
                     opacity: 0.9,
-                    children: /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("title", { children: `[스트로브] 건반 ${d.keyNumber} (${d.noteName}${d.octave}): ${d.strobeCents > 0 ? "+" : ""}${d.strobeCents.toFixed(1)}¢` }, void 0, false, {
-                      fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                      lineNumber: 433,
-                      columnNumber: 21
-                    }, this)
-                  },
-                  void 0,
-                  false,
-                  {
-                    fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                    lineNumber: 430,
-                    columnNumber: 19
-                  },
-                  this
+                    children: /* @__PURE__ */ jsxRuntimeExports.jsx("title", { children: `[스트로브] 건반 ${d.keyNumber} (${d.noteName}${d.octave}): ${d.strobeCents > 0 ? "+" : ""}${d.strobeCents.toFixed(1)}¢` })
+                  }
                 ),
-                d.cents !== null && /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV(
+                d.cents !== null && /* @__PURE__ */ jsxRuntimeExports.jsx(
                   "line",
                   {
                     x1: cx,
@@ -1040,32 +890,16 @@ function TuningCurveChart({ data, activeKeyIndex, showStrobeOnly = false }) {
                     strokeWidth: 0.8,
                     strokeDasharray: "2,2",
                     opacity: 0.5
-                  },
-                  void 0,
-                  false,
-                  {
-                    fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                    lineNumber: 437,
-                    columnNumber: 21
-                  },
-                  this
+                  }
                 )
-              ] }, `strobe-${d.keyIndex}`, true, {
-                fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                lineNumber: 429,
-                columnNumber: 17
-              }, this);
-            }) }, void 0, false, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 421,
-              columnNumber: 11
-            }, this),
-            /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { transform: `translate(0, ${KB_TOP})`, clipPath: "url(#plotClip)", children: [
+              ] }, `strobe-${d.keyIndex}`);
+            }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { transform: `translate(0, ${KB_TOP})`, clipPath: "url(#plotClip)", children: [
               whiteKeyPositions.map(({ ki, x }) => {
                 const vx = keyXInView(x);
                 if (vx < -WK_W || vx > PW + WK_W) return null;
                 const isActive = ki === activeKeyIndex;
-                return /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV(
+                return /* @__PURE__ */ jsxRuntimeExports.jsx(
                   "rect",
                   {
                     x: vx + 0.3,
@@ -1076,21 +910,14 @@ function TuningCurveChart({ data, activeKeyIndex, showStrobeOnly = false }) {
                     stroke: "#6b7280",
                     strokeWidth: 0.5
                   },
-                  `wk${ki}`,
-                  false,
-                  {
-                    fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                    lineNumber: 452,
-                    columnNumber: 17
-                  },
-                  this
+                  `wk${ki}`
                 );
               }),
               blackKeyPositions.map(({ ki, x }) => {
                 const vx = keyXInView(x);
                 if (vx < -WK_W || vx > PW + WK_W) return null;
                 const isActive = ki === activeKeyIndex;
-                return /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV(
+                return /* @__PURE__ */ jsxRuntimeExports.jsx(
                   "rect",
                   {
                     x: vx,
@@ -1102,14 +929,7 @@ function TuningCurveChart({ data, activeKeyIndex, showStrobeOnly = false }) {
                     stroke: "white",
                     strokeWidth: 0.8
                   },
-                  `bk${ki}`,
-                  false,
-                  {
-                    fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                    lineNumber: 462,
-                    columnNumber: 17
-                  },
-                  this
+                  `bk${ki}`
                 );
               }),
               xLabels.map((kn) => {
@@ -1119,11 +939,7 @@ function TuningCurveChart({ data, activeKeyIndex, showStrobeOnly = false }) {
                 const rawX = wk ? wk.x + PW / 52 / 2 : bk ? bk.x + WK_W * 0.275 : 0;
                 const vx = keyXInView(rawX);
                 if (vx < 0 || vx > PW) return null;
-                return /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("text", { x: vx, y: KB_H + 11, textAnchor: "middle", fontSize: 7, fill: "#6b7280", children: kn }, `kn${kn}`, false, {
-                  fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                  lineNumber: 477,
-                  columnNumber: 17
-                }, this);
+                return /* @__PURE__ */ jsxRuntimeExports.jsx("text", { x: vx, y: KB_H + 11, textAnchor: "middle", fontSize: 7, fill: "#6b7280", children: kn }, `kn${kn}`);
               }),
               A_INDICES$1.map((ki) => {
                 const wk = whiteKeyPositions.find((w) => w.ki === ki);
@@ -1132,57 +948,21 @@ function TuningCurveChart({ data, activeKeyIndex, showStrobeOnly = false }) {
                 if (vx < 0 || vx > PW) return null;
                 const keyNum = ki + 1;
                 const octave = PIANO_KEYS[ki].octave;
-                return /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("g", { children: [
-                  /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("text", { x: vx, y: KB_H + 22, textAnchor: "middle", fontSize: 7, fontWeight: "bold", fill: "#374151", children: [
+                return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("text", { x: vx, y: KB_H + 22, textAnchor: "middle", fontSize: 7, fontWeight: "bold", fill: "#374151", children: [
                     "A",
                     octave
-                  ] }, void 0, true, {
-                    fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                    lineNumber: 492,
-                    columnNumber: 19
-                  }, this),
-                  /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("text", { x: vx, y: KB_H + 31, textAnchor: "middle", fontSize: 6, fill: "#94a3b8", children: keyNum }, void 0, false, {
-                    fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                    lineNumber: 494,
-                    columnNumber: 19
-                  }, this),
-                  /* @__PURE__ */ jsxDevRuntimeExports.jsxDEV("line", { x1: vx, y1: 0, x2: vx, y2: -4, stroke: "#374151", strokeWidth: 0.8 }, void 0, false, {
-                    fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                    lineNumber: 496,
-                    columnNumber: 19
-                  }, this)
-                ] }, `ab${ki}`, true, {
-                  fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-                  lineNumber: 490,
-                  columnNumber: 17
-                }, this);
+                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("text", { x: vx, y: KB_H + 31, textAnchor: "middle", fontSize: 6, fill: "#94a3b8", children: keyNum }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: vx, y1: 0, x2: vx, y2: -4, stroke: "#374151", strokeWidth: 0.8 })
+                ] }, `ab${ki}`);
               })
-            ] }, void 0, true, {
-              fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-              lineNumber: 446,
-              columnNumber: 11
-            }, this)
-          ] }, void 0, true, {
-            fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-            lineNumber: 302,
-            columnNumber: 9
-          }, this)
+            ] })
+          ] })
         ]
-      },
-      void 0,
-      true,
-      {
-        fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-        lineNumber: 273,
-        columnNumber: 7
-      },
-      this
+      }
     )
-  ] }, void 0, true, {
-    fileName: "/home/ubuntu/newtun/pianotune-lovabletune/src/components/tuner/TuningCurveChart.tsx",
-    lineNumber: 251,
-    columnNumber: 5
-  }, this);
+  ] });
 }
 const STORAGE_KEY = "piano_tuning_sessions_v2";
 const MAX_SESSIONS = 10;
@@ -1622,11 +1402,13 @@ export {
   cn as c,
   exportToImage as d,
   exportToPdf as e,
-  applyHannWindow as f,
-  getRMS as g,
-  detectPitchYIN as h,
-  correctOctaveByHPS as i,
-  freqToCentOffset as j,
+  centsFromPhaseDelta as f,
+  goertzel as g,
+  getRMS as h,
+  applyHannWindow as i,
+  detectPitchYIN as j,
+  correctOctaveByHPS as k,
+  freqToCentOffset as l,
   median as m,
   targetPartial as t,
   useTuningSession as u

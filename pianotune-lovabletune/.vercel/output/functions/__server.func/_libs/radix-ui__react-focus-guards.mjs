@@ -1,26 +1,16 @@
 import { r as reactExports } from "./react.mjs";
 var count = 0;
-var guards = null;
 function useFocusGuards() {
   reactExports.useEffect(() => {
-    if (!guards) {
-      guards = { start: createFocusGuard(), end: createFocusGuard() };
-    }
-    const { start, end } = guards;
-    if (document.body.firstElementChild !== start) {
-      document.body.insertAdjacentElement("afterbegin", start);
-    }
-    if (document.body.lastElementChild !== end) {
-      document.body.insertAdjacentElement("beforeend", end);
-    }
+    const edgeGuards = document.querySelectorAll("[data-radix-focus-guard]");
+    document.body.insertAdjacentElement("afterbegin", edgeGuards[0] ?? createFocusGuard());
+    document.body.insertAdjacentElement("beforeend", edgeGuards[1] ?? createFocusGuard());
     count++;
     return () => {
       if (count === 1) {
-        guards?.start.remove();
-        guards?.end.remove();
-        guards = null;
+        document.querySelectorAll("[data-radix-focus-guard]").forEach((node) => node.remove());
       }
-      count = Math.max(0, count - 1);
+      count--;
     };
   }, []);
 }

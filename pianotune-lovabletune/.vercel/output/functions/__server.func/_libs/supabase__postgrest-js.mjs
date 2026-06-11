@@ -218,16 +218,13 @@ var PostgrestBuilder = class {
     const executeWithRetry = async () => {
       let attemptCount = 0;
       while (true) {
-        const headers = {};
-        _this.headers.forEach((value, key) => {
-          headers[key] = value;
-        });
-        if (attemptCount > 0) headers["X-Retry-Count"] = String(attemptCount);
+        const requestHeaders = new Headers(_this.headers);
+        if (attemptCount > 0) requestHeaders.set("X-Retry-Count", String(attemptCount));
         let res$1;
         try {
           res$1 = await _fetch(_this.url.toString(), {
             method: _this.method,
-            headers,
+            headers: requestHeaders,
             body: JSON.stringify(_this.body, (_, value) => typeof value === "bigint" ? value.toString() : value),
             signal: _this.signal
           });
@@ -738,9 +735,9 @@ var PostgrestTransformBuilder = class extends PostgrestBuilder {
     return this;
   }
   /**
-  * Limit the query result by `rows`.
+  * Limit the query result by `count`.
   *
-  * @param rows - The maximum number of rows to return
+  * @param count - The maximum number of rows to return
   * @param options - Named parameters
   * @param options.referencedTable - Set this to limit rows of referenced
   * tables instead of the parent table
@@ -837,9 +834,9 @@ var PostgrestTransformBuilder = class extends PostgrestBuilder {
   * }
   * ```
   */
-  limit(rows, { foreignTable, referencedTable = foreignTable } = {}) {
+  limit(count, { foreignTable, referencedTable = foreignTable } = {}) {
     const key = typeof referencedTable === "undefined" ? "limit" : `${referencedTable}.limit`;
-    this.url.searchParams.set(key, `${rows}`);
+    this.url.searchParams.set(key, `${count}`);
     return this;
   }
   /**
@@ -1282,13 +1279,13 @@ var PostgrestTransformBuilder = class extends PostgrestBuilder {
   * Set the maximum number of rows that can be affected by the query.
   * Only available in PostgREST v13+ and only works with PATCH and DELETE methods.
   *
-  * @param rows - The maximum number of rows that can be affected
+  * @param value - The maximum number of rows that can be affected
   *
   * @category Database
   */
-  maxAffected(rows) {
+  maxAffected(value) {
     this.headers.append("Prefer", "handling=strict");
-    this.headers.append("Prefer", `max-affected=${rows}`);
+    this.headers.append("Prefer", `max-affected=${value}`);
     return this;
   }
 };

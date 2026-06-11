@@ -1,5 +1,5 @@
 import { __rest } from "tslib";
-const version = "2.108.0";
+const version = "2.107.0";
 const AUTO_REFRESH_TICK_DURATION_MS = 30 * 1e3;
 const AUTO_REFRESH_TICK_THRESHOLD = 3;
 const EXPIRY_MARGIN_MS = AUTO_REFRESH_TICK_THRESHOLD * AUTO_REFRESH_TICK_DURATION_MS;
@@ -4614,26 +4614,15 @@ class GoTrueClient {
       const endpoint = `${this.url}/resend`;
       if ("email" in credentials) {
         const { email, type, options } = credentials;
-        let codeChallenge = null;
-        let codeChallengeMethod = null;
-        if (this.flowType === "pkce") {
-          ;
-          [codeChallenge, codeChallengeMethod] = await getCodeChallengeAndMethod(this.storage, this.storageKey);
-        }
         const { error } = await _request(this.fetch, "POST", endpoint, {
           headers: this.headers,
           body: {
             email,
             type,
-            gotrue_meta_security: { captcha_token: options === null || options === void 0 ? void 0 : options.captchaToken },
-            code_challenge: codeChallenge,
-            code_challenge_method: codeChallengeMethod
+            gotrue_meta_security: { captcha_token: options === null || options === void 0 ? void 0 : options.captchaToken }
           },
           redirectTo: options === null || options === void 0 ? void 0 : options.emailRedirectTo
         });
-        if (error) {
-          await removeItemAsync(this.storage, `${this.storageKey}-code-verifier`);
-        }
         return this._returnResult({ data: { user: null, session: null }, error });
       } else if ("phone" in credentials) {
         const { phone, type, options } = credentials;
@@ -4652,7 +4641,6 @@ class GoTrueClient {
       }
       throw new AuthInvalidCredentialsError("You must provide either an email or phone number and a type");
     } catch (error) {
-      await removeItemAsync(this.storage, `${this.storageKey}-code-verifier`);
       if (isAuthError(error)) {
         return this._returnResult({ data: { user: null, session: null }, error });
       }
@@ -6315,7 +6303,7 @@ class GoTrueClient {
             if (isAuthRefreshDiscardedError(error)) {
               this._debug(debugName, "refresh discarded by commit guard", error);
             } else {
-              this._debug(debugName, "refresh failed", error);
+              console.error(error);
               if (!isAuthRetryableFetchError(error)) {
                 this._debug(debugName, "refresh failed with a non-retryable error, removing the session", error);
                 await this._removeSession();

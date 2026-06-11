@@ -75,15 +75,8 @@ const createLucideIcon = (iconName, iconNode) => {
   Component.displayName = toPascalCase(iconName);
   return Component;
 };
-const __iconNode$3 = [["path", { d: "M21 12a9 9 0 1 1-6.219-8.56", key: "13zald" }]];
-const LoaderCircle = createLucideIcon("loader-circle", __iconNode$3);
-const __iconNode$2 = [
-  ["path", { d: "M9 18V5l12-2v13", key: "1jmyc2" }],
-  ["path", { d: "m9 9 12-2", key: "1e64n2" }],
-  ["circle", { cx: "6", cy: "18", r: "3", key: "fqmcym" }],
-  ["circle", { cx: "18", cy: "16", r: "3", key: "1hluhg" }]
-];
-const Music4 = createLucideIcon("music-4", __iconNode$2);
+const __iconNode$2 = [["path", { d: "M21 12a9 9 0 1 1-6.219-8.56", key: "13zald" }]];
+const LoaderCircle = createLucideIcon("loader-circle", __iconNode$2);
 const __iconNode$1 = [
   ["path", { d: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8", key: "v9h5vc" }],
   ["path", { d: "M21 3v5h-5", key: "1q7to0" }],
@@ -98,7 +91,6 @@ const __iconNode = [
 const X = createLucideIcon("x", __iconNode);
 export {
   LoaderCircle as L,
-  Music4 as M,
   RefreshCw as R,
   X
 };

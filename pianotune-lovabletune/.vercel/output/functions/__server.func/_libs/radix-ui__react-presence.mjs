@@ -1,4 +1,5 @@
 import { r as reactExports } from "./react.mjs";
+import { u as useComposedRefs } from "./radix-ui__react-compose-refs.mjs";
 import { u as useLayoutEffect2 } from "./@radix-ui/react-use-layout-effect+[...].mjs";
 function useStateMachine(initialState, machine) {
   return reactExports.useReducer((state, event) => {
@@ -10,7 +11,7 @@ var Presence = (props) => {
   const { present, children } = props;
   const presence = usePresence(present);
   const child = typeof children === "function" ? children({ present: presence.isPresent }) : reactExports.Children.only(children);
-  const ref = useStableComposedRefs(presence.ref, getElementRef(child));
+  const ref = useComposedRefs(presence.ref, getElementRef(child));
   const forceMount = typeof children === "function";
   return forceMount || presence.isPresent ? reactExports.cloneElement(child, { ref }) : null;
 };
@@ -105,40 +106,6 @@ function usePresence(present) {
       setNode(node2);
     }, [])
   };
-}
-function setRef(ref, value) {
-  if (typeof ref === "function") {
-    return ref(value);
-  } else if (ref !== null && ref !== void 0) {
-    ref.current = value;
-  }
-}
-function useStableComposedRefs(...refs) {
-  const refsRef = reactExports.useRef(refs);
-  refsRef.current = refs;
-  return reactExports.useCallback((node) => {
-    const currentRefs = refsRef.current;
-    let hasCleanup = false;
-    const cleanups = currentRefs.map((ref) => {
-      const cleanup = setRef(ref, node);
-      if (!hasCleanup && typeof cleanup === "function") {
-        hasCleanup = true;
-      }
-      return cleanup;
-    });
-    if (hasCleanup) {
-      return () => {
-        for (let i = 0; i < cleanups.length; i++) {
-          const cleanup = cleanups[i];
-          if (typeof cleanup === "function") {
-            cleanup();
-          } else {
-            setRef(currentRefs[i], null);
-          }
-        }
-      };
-    }
-  }, []);
 }
 function getAnimationName(styles) {
   return styles?.animationName || "none";

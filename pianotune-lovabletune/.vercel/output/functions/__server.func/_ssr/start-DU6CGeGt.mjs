@@ -1,28 +1,25 @@
-import { c as createMiddleware } from "./server-DZAqY7I1.mjs";
 import { r as renderErrorPage } from "./index.mjs";
-import { s as supabase } from "./client-RALsHCOQ.mjs";
-import "../_libs/react.mjs";
-import "node:async_hooks";
-import "node:stream";
-import "../_libs/tanstack__react-router.mjs";
-import "../_libs/tanstack__router-core.mjs";
-import "../_libs/tanstack__history.mjs";
-import "node:stream/web";
-import "../_libs/react-dom.mjs";
-import "util";
-import "crypto";
-import "async_hooks";
-import "stream";
-import "../_libs/isbot.mjs";
-import "../_libs/supabase__supabase-js.mjs";
-import "../_libs/supabase__postgrest-js.mjs";
-import "../_libs/supabase__realtime-js.mjs";
-import "../_libs/supabase__phoenix.mjs";
-import "../_libs/supabase__storage-js.mjs";
-import "../_libs/iceberg-js.mjs";
-import "../_libs/supabase__auth-js.mjs";
-import "tslib";
-import "../_libs/supabase__functions-js.mjs";
+var createMiddleware = (options, __opts) => {
+  const resolvedOptions = {
+    type: "request",
+    ...__opts || options
+  };
+  return {
+    options: resolvedOptions,
+    middleware: (middleware) => {
+      return createMiddleware({}, Object.assign(resolvedOptions, { middleware }));
+    },
+    inputValidator: (inputValidator) => {
+      return createMiddleware({}, Object.assign(resolvedOptions, { inputValidator }));
+    },
+    client: (client) => {
+      return createMiddleware({}, Object.assign(resolvedOptions, { client }));
+    },
+    server: (server) => {
+      return createMiddleware({}, Object.assign(resolvedOptions, { server }));
+    }
+  };
+};
 function dedupeSerializationAdapters(deduped, serializationAdapters) {
   for (let i = 0, len = serializationAdapters.length; i < len; i++) {
     const current = serializationAdapters[i];
@@ -46,15 +43,6 @@ var createStart = (getOptions) => {
     createMiddleware
   };
 };
-const attachSupabaseAuth = createMiddleware({ type: "function" }).client(
-  async ({ next }) => {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    return next({
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
-    });
-  }
-);
 const errorMiddleware = createMiddleware().server(async ({ next }) => {
   try {
     return await next();
@@ -70,7 +58,7 @@ const errorMiddleware = createMiddleware().server(async ({ next }) => {
   }
 });
 const startInstance = createStart(() => ({
-  functionMiddleware: [attachSupabaseAuth],
+  functionMiddleware: [],
   requestMiddleware: [errorMiddleware]
 }));
 export {

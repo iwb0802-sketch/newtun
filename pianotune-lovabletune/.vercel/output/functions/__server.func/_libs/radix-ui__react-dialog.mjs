@@ -12,7 +12,7 @@ import { P as Primitive } from "./radix-ui__react-primitive.mjs";
 import { u as useFocusGuards } from "./radix-ui__react-focus-guards.mjs";
 import { R as ReactRemoveScroll } from "./react-remove-scroll.mjs";
 import { h as hideOthers } from "./aria-hidden.mjs";
-import { c as createSlot } from "./radix-ui__react-slot.mjs";
+import { a as createSlot } from "./radix-ui__react-slot.mjs";
 var DIALOG_NAME = "Dialog";
 var [createDialogContext] = createContextScope(DIALOG_NAME);
 var [DialogProvider, useDialogContext] = createDialogContext(DIALOG_NAME);
@@ -63,7 +63,7 @@ var DialogTrigger = reactExports.forwardRef(
         type: "button",
         "aria-haspopup": "dialog",
         "aria-expanded": context.open,
-        "aria-controls": context.open ? context.contentId : void 0,
+        "aria-controls": context.contentId,
         "data-state": getState(context.open),
         ...triggerProps,
         ref: composedTriggerRef,
@@ -138,7 +138,7 @@ var DialogContentModal = reactExports.forwardRef(
         ...props,
         ref: composedRefs,
         trapFocus: context.open,
-        disableOutsidePointerEvents: context.open,
+        disableOutsidePointerEvents: true,
         onCloseAutoFocus: composeEventHandlers(props.onCloseAutoFocus, (event) => {
           event.preventDefault();
           context.triggerRef.current?.focus();

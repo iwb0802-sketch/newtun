@@ -1,4 +1,0 @@
-const tsrStartManifest = () => ({ routes: { __root__: { filePath: "/home/ubuntu/newtun/pianotune-lovabletune/src/routes/__root.tsx", children: ["/", "/manual", "/reset-password"], preloads: ["/assets/index-D01JxUEq.js"], scripts: [{ attrs: { type: "module", async: true, src: "/assets/index-D01JxUEq.js" } }] }, "/": { filePath: "/home/ubuntu/newtun/pianotune-lovabletune/src/routes/index.tsx", children: void 0, preloads: ["/assets/index-BaD7KZd6.js", "/assets/exportPdf-BPqXkFft.js"] }, "/manual": { filePath: "/home/ubuntu/newtun/pianotune-lovabletune/src/routes/manual.tsx", children: void 0, preloads: ["/assets/manual-CLZ_Hk-s.js", "/assets/exportPdf-BPqXkFft.js"] }, "/reset-password": { filePath: "/home/ubuntu/newtun/pianotune-lovabletune/src/routes/reset-password.tsx", children: void 0, preloads: ["/assets/reset-password-D9kXujWv.js"] } } });
-export {
-  tsrStartManifest
-};
