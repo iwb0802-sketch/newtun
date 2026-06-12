@@ -100,10 +100,10 @@ export function getYINParams(zone: Zone, rms: number): YINParams {
       };
     case "high":
       return {
-        fMin: 500,
-        fMax: 5500,
+        fMin: 450,
+        fMax: 6000,
         // 고음: 배음 희박하고 decay 빠름 → 약한 신호도 잡아야 함
-        threshold: Math.max(0.08, Math.min(0.13, 0.18 - rms * 1.0)),
+        threshold: Math.max(0.07, Math.min(0.12, 0.16 - rms * 0.8)),
       };
   }
 }
@@ -374,10 +374,10 @@ export function getStabilityConfig(zone: Zone): StabilityConfig {
     case "high":
       return {
         peakRatio:     0.40,  // 고음: 빠른 decay 허용
-        peakThreshold: 0.008,
-        maxStddev:     1.5,
-        durationMs:    500,
-        minSamples:    6,
+        peakThreshold: 0.006,
+        maxStddev:     2.0,
+        durationMs:    450,
+        minSamples:    5,
       };
   }
 }
