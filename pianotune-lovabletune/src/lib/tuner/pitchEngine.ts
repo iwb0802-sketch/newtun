@@ -1,25 +1,56 @@
 /**
- * pitchEngine.ts
- * 야마하 PT-100 방식 피치 분석 엔진
+ * pitchEngine.ts — v3
+ * 파트별 최적 피치 분석 엔진
  *
- * 핵심:
- * 1. YIN (시간영역 자기상관) → 1차 후보 주파수
- * 2. HPS 스타일 옵타브 보정 (스펙트럼에서 f, f/2, f/3, f/4, f/5, f/6 후보 평가)
- * 3. PT-100식 타겟 배음 매핑 (저음=6/4배음, 중음=2배음, A3+=기본음)
- * 4. Goertzel 알고리즘 (단일 주파수 위상 추출 → 스트로브)
+ * ┌─────────────────────────────────────────────────────────────────┐
+ * │ 저음 (keyIndex  0~26, A0~D3)                                    │
+ * │  - 버퍼 8192 필수 (27Hz = 주기 1633샘플, 최소 2주기 필요)        │
+ * │  - YIN: fMin=20, fMax=200, threshold 적응형                     │
+ * │  - 동적 배음 선택 (6/4/2 중 Goertzel magnitude 최강)            │
+ * │  - Coarse(1¢) → Fine(0.2¢) 2단계 Goertzel 스캔                 │
+ * │  - 옥타브 폴딩 마진 넓게 (×2 이내)                              │
+ * │  - 안정화: RMS decay + 센트 표준편차 < 1.5¢ 동시 충족           │
+ * │                                                                 │
+ * │ 중음 (keyIndex 27~51, D#3~B4)                                   │
+ * │  - 버퍼 4096                                                    │
+ * │  - YIN: fMin=140, fMax=600, threshold 0.10                     │
+ * │  - Goertzel: 2배음 기준, Coarse(2¢) → Fine(0.5¢)              │
+ * │  - YIN + Goertzel 교차검증 ±6¢ 이내 → 가중평균                 │
+ * │  - 안정화: RMS decay + 표준편차 < 1.0¢                         │
+ * │                                                                 │
+ * │ 고음 (keyIndex 52~87, C5~C8)                                    │
+ * │  - 버퍼 4096 (고음은 주기 짧아서 충분)                          │
+ * │  - YIN: fMin=500, fMax=5000, threshold 적응형(0.08~0.13)        │
+ * │  - Goertzel: 기본음 기준, Coarse(2¢) → Fine(0.5¢)             │
+ * │  - HPS 보정 비활성화 (배음 희박 → 오탐 위험)                    │
+ * │  - 안정화: 표준편차 < 1.5¢, 짧은 decay(500ms)                  │
+ * └─────────────────────────────────────────────────────────────────┘
  */
 
 export const A0_FREQ = 27.5;
 export const A4_FREQ = 440;
 export const C8_FREQ = 4186.01;
 
-/* ---------- 윈도우 / 통계 ---------- */
+// ─── 음역대 판별 ────────────────────────────────────────────────────
+export type Zone = "low" | "mid" | "high";
+
+export function getZone(keyIndex: number): Zone {
+  if (keyIndex <= 26) return "low";
+  if (keyIndex <= 51) return "mid";
+  return "high";
+}
+
+// 음역대별 권장 FFT 버퍼 사이즈
+export function getBufferSize(zone: Zone): 4096 | 8192 {
+  return zone === "low" ? 8192 : 4096;
+}
+
+// ─── 기본 유틸 ──────────────────────────────────────────────────────
 export function applyHannWindow(buf: Float32Array): Float32Array {
   const N = buf.length;
   const out = new Float32Array(N);
   for (let i = 0; i < N; i++) {
-    const w = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (N - 1)));
-    out[i] = buf[i] * w;
+    out[i] = buf[i] * 0.5 * (1 - Math.cos((2 * Math.PI * i) / (N - 1)));
   }
   return out;
 }
@@ -37,14 +68,52 @@ export function median(arr: number[]): number {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-/* ---------- YIN with frequency limits ---------- */
+export function stddev(arr: number[]): number {
+  if (arr.length < 2) return 0;
+  const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+  return Math.sqrt(arr.reduce((s, v) => s + (v - mean) ** 2, 0) / arr.length);
+}
+
+// ─── YIN (파트별 파라미터) ───────────────────────────────────────────
+export interface YINParams {
+  fMin: number;
+  fMax: number;
+  threshold: number;
+}
+
+export function getYINParams(zone: Zone, rms: number): YINParams {
+  // threshold를 RMS 기반으로 적응형으로 조절
+  // 신호가 약할수록 threshold 낮춰서 민감도 높임 (단, 최솟값 제한)
+  switch (zone) {
+    case "low":
+      return {
+        fMin: 20,
+        fMax: 200,
+        // 저음: 배음이 강해 기본음 감지 어려움 → threshold 낮게
+        threshold: Math.max(0.08, Math.min(0.12, 0.15 - rms * 0.5)),
+      };
+    case "mid":
+      return {
+        fMin: 140,
+        fMax: 600,
+        threshold: 0.10,
+      };
+    case "high":
+      return {
+        fMin: 500,
+        fMax: 5500,
+        // 고음: 배음 희박하고 decay 빠름 → 약한 신호도 잡아야 함
+        threshold: Math.max(0.08, Math.min(0.13, 0.18 - rms * 1.0)),
+      };
+  }
+}
+
 export function detectPitchYIN(
   buf: Float32Array,
   sr: number,
-  fMin = 26,
-  fMax = 5000,
-  threshold = 0.12
+  params: YINParams
 ): number {
+  const { fMin, fMax, threshold } = params;
   const half = Math.floor(buf.length / 2);
   const tauMin = Math.max(2, Math.floor(sr / fMax));
   const tauMax = Math.min(half - 1, Math.ceil(sr / fMin));
@@ -58,6 +127,7 @@ export function detectPitchYIN(
     }
     yin[tau] = s;
   }
+
   // cumulative mean normalized difference
   yin[0] = 1;
   let rs = 0;
@@ -66,6 +136,7 @@ export function detectPitchYIN(
     if (rs > 0) yin[tau] *= tau / rs;
   }
 
+  // 최소값 탐색
   let tau = tauMin;
   while (tau <= tauMax) {
     if (yin[tau] < threshold) {
@@ -86,83 +157,22 @@ export function detectPitchYIN(
   return sr / bt;
 }
 
-/* ---------- HPS 옵타브 보정 ----------
- * AnalyserNode.getFloatFrequencyData(spectrumDb) 결과를 받음.
- * fYin 주변에서 f/2, f/3, f/4 등 서브하모닉 후보를 평가.
- * 각 후보 c에 대해 점수 = Σ_{k=1..6} magLinear[round(k·c·N/sr)]
- * 가장 점수 높고 27Hz 이상인 후보 채택.
- */
-export function correctOctaveByHPS(
+// ─── 옥타브 폴딩 (파트별 마진) ──────────────────────────────────────
+export function foldToBaseOctave(
   fYin: number,
-  spectrumDb: Float32Array,   // dB scale from getFloatFrequencyData (length = fftSize/2)
-  sr: number,
-  fftSize: number,
-  numHarmonics = 5
+  baseFreq: number,
+  zone: Zone
 ): number {
-  if (fYin <= 0) return fYin;
-  const binHz = sr / fftSize;
-  const N = spectrumDb.length;
-
-  // dB → linear magnitude (0~1 scale, no need for absolute)
-  const magAt = (freq: number): number => {
-    const bin = Math.round(freq / binHz);
-    if (bin < 1 || bin >= N) return 0;
-    // peak interpolation across 3 bins
-    let maxDb = -Infinity;
-    for (let d = -1; d <= 1; d++) {
-      const b = bin + d;
-      if (b >= 1 && b < N && spectrumDb[b] > maxDb) maxDb = spectrumDb[b];
-    }
-    if (maxDb === -Infinity || maxDb < -90) return 0;
-    return Math.pow(10, maxDb / 20);
-  };
-
-  // 후보: f, f/2, f/3, f/4, f/5, f/6 중 27Hz 이상
-  const candidates: number[] = [];
-  for (let div = 1; div <= 6; div++) {
-    const c = fYin / div;
-    if (c >= A0_FREQ * 0.97) candidates.push(c);
-  }
-
-  const score = (c: number): number => {
-    let s = 0;
-    for (let k = 1; k <= numHarmonics; k++) {
-      if (k * c > sr / 2) break;
-      s += magAt(k * c);
-    }
-    return s;
-  };
-
-  const baseScore = score(fYin);
-  let bestC = fYin;
-  let bestS = baseScore;
-  for (const c of candidates) {
-    if (c === fYin) continue;
-    const s = score(c);
-    // 서브하모닉이 충분히 강해야 채택 (1.15배 마진)
-    if (s > bestS * 1.15) {
-      bestS = s;
-      bestC = c;
-    }
-  }
-  return bestC;
+  let f = fYin;
+  // 저음은 배음이 강해서 기본음을 2~6배음으로 잡기 쉬움 → 넓은 마진
+  const upperMargin = zone === "low" ? 3.5 : 1.5;
+  const lowerMargin = zone === "low" ? 0.4 : 0.67;
+  while (f > baseFreq * upperMargin) f /= 2;
+  while (f < baseFreq * lowerMargin) f *= 2;
+  return f;
 }
 
-/* ---------- PT-100식 타겟 배음 매핑 ----------
- * keyIndex 0 = A0
- */
-export function targetPartial(keyIndex: number): number {
-  if (keyIndex < 0) return 1;
-  if (keyIndex < 12) return 6;   // A0–G#1
-  if (keyIndex < 24) return 4;   // A1–G#2
-  if (keyIndex < 36) return 2;   // A2–G#3
-  return 1;                       // A3 이상
-}
-
-/* ---------- Goertzel: 단일 주파수 복소 응답 ----------
- * targetFreq 빈의 (real, imag) 반환 → 위상 = atan2(imag, real)
- * 매 프레임 N 곱셈만 필요.
- */
+// ─── Goertzel ────────────────────────────────────────────────────────
 export function goertzel(
   buf: Float32Array,
   sr: number,
@@ -174,7 +184,6 @@ export function goertzel(
   const cosW = Math.cos(w);
   const sinW = Math.sin(w);
   const coeff = 2 * cosW;
-
   let q0 = 0, q1 = 0, q2 = 0;
   for (let i = 0; i < N; i++) {
     q0 = coeff * q1 - q2 + buf[i];
@@ -184,29 +193,206 @@ export function goertzel(
   const real = q1 - q2 * cosW;
   const imag = q2 * sinW;
   return {
-    real,
-    imag,
+    real, imag,
     magnitude: Math.sqrt(real * real + imag * imag) / N,
     phase: Math.atan2(imag, real),
   };
 }
 
-/* ---------- 위상차 → cent ----------
- * targetFreq 빈의 위상이 시간 dtSec 동안 deltaPhase만큼 변했을 때,
- * 실제 주파수는 targetFreq + deltaPhase/(2π·dtSec)
- */
+// ─── 2단계 Goertzel 스캔 (Coarse → Fine) ────────────────────────────
+// 1단계: 넓은 범위를 굵은 스텝으로 피크 탐색
+// 2단계: 피크 ±(coarseStep×2) 구간을 fineStep으로 정밀 탐색
+export interface GoertzelScanResult {
+  bestFreq: number;       // 측정된 실제 주파수 (배음 포함)
+  bestMagnitude: number;
+  centsOffset: number;    // 기본음 기준 cent 오프셋
+}
+
+export function goertzelTwoPassScan(
+  buf: Float32Array,
+  sr: number,
+  targetFreq: number,   // 기본음 × partial (배음 주파수)
+  baseFreq: number,     // 건반 기본음
+  partial: number,
+  zone: Zone
+): GoertzelScanResult {
+  // 파트별 스캔 파라미터
+  const coarseStep = zone === "low" ? 1.0 : 2.0;   // ¢
+  const fineStep   = zone === "low" ? 0.2 : 0.5;   // ¢
+  const scanRange  = zone === "high" ? 80 : 50;     // ±¢
+
+  // 1단계: Coarse scan
+  const coarseSteps = Math.round(scanRange / coarseStep);
+  let bestFreq = targetFreq;
+  let bestMag  = -1;
+  for (let i = -coarseSteps; i <= coarseSteps; i++) {
+    const f = targetFreq * Math.pow(2, (i * coarseStep) / 1200);
+    const mag = goertzel(buf, sr, f).magnitude;
+    if (mag > bestMag) { bestMag = mag; bestFreq = f; }
+  }
+
+  // 2단계: Fine scan (coarse 피크 ±coarseStep×2 구간)
+  const fineRange = coarseStep * 2;
+  const fineSteps = Math.round(fineRange / fineStep);
+  let fineBestFreq = bestFreq;
+  let fineBestMag  = -1;
+  for (let i = -fineSteps; i <= fineSteps; i++) {
+    const f = bestFreq * Math.pow(2, (i * fineStep) / 1200);
+    const mag = goertzel(buf, sr, f).magnitude;
+    if (mag > fineBestMag) { fineBestMag = mag; fineBestFreq = f; }
+  }
+
+  const measuredBase = fineBestFreq / partial;
+  const centsOffset  = 1200 * Math.log2(measuredBase / baseFreq);
+
+  return {
+    bestFreq: fineBestFreq,
+    bestMagnitude: fineBestMag,
+    centsOffset: Math.round(centsOffset * 10) / 10,
+  };
+}
+
+// ─── PT-100식 타겟 배음 (고정 fallback) ─────────────────────────────
+export function targetPartial(keyIndex: number): number {
+  if (keyIndex < 12) return 6;   // A0–G#1
+  if (keyIndex < 24) return 4;   // A1–G#2
+  if (keyIndex < 36) return 2;   // A2–G#3
+  return 1;
+}
+
+// ─── 동적 배음 선택 (저음 전용) ─────────────────────────────────────
+// 실제 버퍼에서 후보 배음의 Goertzel magnitude를 비교해 가장 강한 배음 선택
+const MIN_GAIN_RATIO = 1.25; // 후보가 25% 이상 강해야 교체
+
+export function selectBestPartial(
+  buf: Float32Array,
+  sr: number,
+  keyIndex: number,
+  baseFreq: number
+): number {
+  const fallback = targetPartial(keyIndex);
+  if (keyIndex > 26) return fallback; // 저음 전용
+
+  const candidates = [2, 4, 6].filter(
+    p => baseFreq * p < sr / 2 && baseFreq * p > 40
+  );
+  if (!candidates.length) return fallback;
+
+  let best = fallback;
+  let bestMag = goertzel(buf, sr, baseFreq * fallback).magnitude;
+
+  for (const p of candidates) {
+    if (p === fallback) continue;
+    const mag = goertzel(buf, sr, baseFreq * p).magnitude;
+    if (mag > bestMag * MIN_GAIN_RATIO) { bestMag = mag; best = p; }
+  }
+  return best;
+}
+
+// ─── HPS 옥타브 보정 (중음 이하만) ─────────────────────────────────
+// 고음(keyIndex >= 52)은 HPS 비활성화
+export function correctOctaveByHPS(
+  fYin: number,
+  spectrumDb: Float32Array,
+  sr: number,
+  fftSize: number,
+  keyIndex: number
+): number {
+  if (keyIndex >= 52 || fYin <= 0) return fYin;
+
+  const numHarmonics = keyIndex <= 26 ? 6 : 4; // 저음은 6배음까지
+  const binHz = sr / fftSize;
+  const N = spectrumDb.length;
+
+  const magAt = (freq: number): number => {
+    const bin = Math.round(freq / binHz);
+    if (bin < 1 || bin >= N) return 0;
+    let maxDb = -Infinity;
+    for (let d = -1; d <= 1; d++) {
+      const b = bin + d;
+      if (b >= 1 && b < N && spectrumDb[b] > maxDb) maxDb = spectrumDb[b];
+    }
+    if (maxDb < -90) return 0;
+    return Math.pow(10, maxDb / 20);
+  };
+
+  const candidates: number[] = [];
+  const maxDiv = keyIndex <= 26 ? 6 : 3;
+  for (let div = 1; div <= maxDiv; div++) {
+    const c = fYin / div;
+    if (c >= A0_FREQ * 0.97) candidates.push(c);
+  }
+
+  const score = (c: number) => {
+    let s = 0;
+    for (let k = 1; k <= numHarmonics; k++) {
+      if (k * c > sr / 2) break;
+      s += magAt(k * c);
+    }
+    return s;
+  };
+
+  let bestC = fYin;
+  let bestS = score(fYin);
+  for (const c of candidates) {
+    if (c === fYin) continue;
+    const s = score(c);
+    // 저음은 서브하모닉 교체 마진 낮춤 (배음 오탐 빈번)
+    const margin = keyIndex <= 26 ? 1.10 : 1.15;
+    if (s > bestS * margin) { bestS = s; bestC = c; }
+  }
+  return bestC;
+}
+
+// ─── 안정화 판정 (RMS decay + 센트 표준편차) ───────────────────────
+export interface StabilityConfig {
+  peakRatio: number;      // rms < peak * peakRatio 이면 decay 구간
+  peakThreshold: number;  // 최소 피크 RMS
+  maxStddev: number;      // 센트 표준편차 한계
+  durationMs: number;     // 안정 유지 시간
+  minSamples: number;     // 최소 샘플 수
+}
+
+export function getStabilityConfig(zone: Zone): StabilityConfig {
+  switch (zone) {
+    case "low":
+      return {
+        peakRatio:     0.60,  // 저음: 긴 sustain, 천천히 decay
+        peakThreshold: 0.012,
+        maxStddev:     1.5,   // ¢
+        durationMs:    1100,
+        minSamples:    10,
+      };
+    case "mid":
+      return {
+        peakRatio:     0.55,
+        peakThreshold: 0.015,
+        maxStddev:     1.0,
+        durationMs:    900,
+        minSamples:    8,
+      };
+    case "high":
+      return {
+        peakRatio:     0.40,  // 고음: 빠른 decay 허용
+        peakThreshold: 0.008,
+        maxStddev:     1.5,
+        durationMs:    500,
+        minSamples:    6,
+      };
+  }
+}
+
+// ─── 위상차 → cent ───────────────────────────────────────────────────
 export function centsFromPhaseDelta(
   prevPhase: number,
   currPhase: number,
   dtSec: number,
   targetFreq: number
 ): number {
-  // unwrap to [-π, π]
   let dp = currPhase - prevPhase;
-  while (dp > Math.PI) dp -= 2 * Math.PI;
+  while (dp > Math.PI)  dp -= 2 * Math.PI;
   while (dp < -Math.PI) dp += 2 * Math.PI;
-  const freqDelta = dp / (2 * Math.PI * dtSec);
-  const actual = targetFreq + freqDelta;
+  const actual = targetFreq + dp / (2 * Math.PI * dtSec);
   if (actual <= 0) return 0;
   return 1200 * Math.log2(actual / targetFreq);
 }

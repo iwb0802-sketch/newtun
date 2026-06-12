@@ -1,100 +1,119 @@
 /**
- * ManualPage.tsx — 수동 조율 페이지
+ * CompositePage.tsx — 복합 조율 모드 v2
  *
- * 엔진 분기:
- *  - keyIndex 0~26 (1~27번): useTargetedStrobe (Goertzel 배음 분석 → 기본음 절대 cent)
- *  - keyIndex 27~87 (28~88번): usePitchDetector (기존 방식)
- *
- * 저장값은 항상 기본음 기준 절대 cent.
- * stableCents ?? detectedCents 혼합 구조 사용 금지.
+ * 수동모드 시퀀스 구조 + 4중 엔진(YIN + Goertzel 교차검증 + 스트로브 안정화)
+ * - 건반 지정은 수동모드와 동일 (SectionTabs + TargetNoteBar)
+ * - 엔진 상세 패널: YIN / Goertzel / 복합 cent 수치 비교
+ * - 교차검증 통과 + 900ms 안정 → 자동 확정 + 다음 건반 이동
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { toast as sonnerToast } from "sonner";
-
-import TuningCurveChart from "@/components/tuner/TuningCurveChart";
-import { PIANO_KEYS, PitchResult, usePitchDetector } from "@/hooks/usePitchDetector";
-import { useTargetedStrobe } from "@/hooks/useTargetedStrobe";
+import { cn } from "@/lib/utils";
+import { useCompositeTuner } from "@/hooks/useCompositeTuner";
 import { useTuningSession } from "@/hooks/useTuningSession";
 import { useWakeLock } from "@/hooks/useWakeLock";
+import { PIANO_KEYS } from "@/hooks/usePitchDetector";
+import TuningCurveChart from "@/components/tuner/TuningCurveChart";
+import { exportToPdf, exportToImage } from "@/lib/tuner/exportPdf";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
-import { cn } from "@/lib/utils";
-import { exportToPdf, exportToImage } from "@/lib/tuner/exportPdf";
+import SectionTabs from "@/features/tuner/manual/SectionTabs";
+import TargetNoteBar from "@/features/tuner/manual/TargetNoteBar";
+import { useManualSequence } from "@/features/tuner/manual/useManualSequence";
 
-import SectionTabs from "./manual/SectionTabs";
-import TargetNoteBar from "./manual/TargetNoteBar";
-import MatchStatus, { type ManualMatchState } from "./manual/MatchStatus";
-import { useManualSequence } from "./manual/useManualSequence";
+const toast = Object.assign(
+  (msg: string, opts?: { duration?: number }) => sonnerToast(msg, opts),
+  {
+    success: (msg: string, opts?: { duration?: number }) => sonnerToast.success(msg, opts),
+    error:   (msg: string) => sonnerToast.error(msg),
+  }
+);
 
-const AUTO_ADVANCE_KEY = "manual_auto_advance_v1";
+function CentsBar({ cents }: { cents: number }) {
+  const clamped = Math.max(-50, Math.min(50, cents));
+  const inTune  = Math.abs(cents) <= 2;
+  const warn    = Math.abs(cents) <= 8;
+  const color   = inTune ? "bg-in-tune" : warn ? "bg-warn" : "bg-off";
+  return (
+    <div className="relative w-full h-3 bg-muted rounded-full overflow-hidden">
+      <div className="absolute left-1/2 top-0 w-px h-full bg-border/60 z-10" />
+      <div
+        className={cn("absolute top-0.5 h-2 rounded-full transition-all duration-100", color)}
+        style={{
+          left:  clamped >= 0 ? "50%" : `${((clamped + 50) / 100) * 100}%`,
+          width: `${Math.abs(clamped)}%`,
+        }}
+      />
+    </div>
+  );
+}
 
-/** keyIndex 0~26 → 저음 구간 (1~27번) → useTargetedStrobe 사용 */
-function isLowRange(keyIndex: number): boolean {
-  return keyIndex <= 26;
+function EngineRow({ label, cents, active, highlight }: {
+  label: string; cents: number | null; active: boolean; highlight?: boolean;
+}) {
+  return (
+    <div className={cn(
+      "flex items-center justify-between px-3 py-1.5 rounded-lg text-xs transition-colors",
+      highlight ? "bg-precision/10 border border-precision/30"
+        : active  ? "bg-muted/60 border border-border"
+        : "bg-muted/30"
+    )}>
+      <span className={cn("font-semibold w-20", highlight ? "text-precision" : "text-muted-foreground")}>
+        {label}
+      </span>
+      <span
+        className={cn(
+          "font-bold tabular-nums w-16 text-right",
+          highlight ? "text-foreground" : active ? "text-foreground/80" : "text-muted-foreground/40"
+        )}
+        style={{ fontFamily: "'JetBrains Mono', monospace" }}
+      >
+        {cents !== null ? `${cents > 0 ? "+" : ""}${cents.toFixed(1)}¢` : "—"}
+      </span>
+    </div>
+  );
 }
 
 export default function ManualPage() {
   const { user } = useAuth();
   const { isPro } = useUserRole(user?.id);
-  const seq = useManualSequence();
-  const [autoAdvance, setAutoAdvance] = useState<boolean>(() => {
-    try {
-      const v = localStorage.getItem(AUTO_ADVANCE_KEY);
-      return v === null ? true : v === "1";
-    } catch { return true; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem(AUTO_ADVANCE_KEY, autoAdvance ? "1" : "0"); } catch { /* ignore */ }
-  }, [autoAdvance]);
 
-  const [matchState, setMatchState] = useState<ManualMatchState>({ kind: "idle" });
+  const seq = useManualSequence();
   const targetKeyRef = useRef(seq.targetKeyIndex);
   useEffect(() => {
     targetKeyRef.current = seq.targetKeyIndex;
-    setMatchState({ kind: "idle" });
   }, [seq.targetKeyIndex]);
 
-  const autoAdvanceRef = useRef(autoAdvance);
-  useEffect(() => { autoAdvanceRef.current = autoAdvance; }, [autoAdvance]);
-
   const {
-    sessions,
-    activeSession,
-    activeSessionId,
-    setActiveSessionId,
-    createSession,
-    recordMeasurement,
-    chartData,
-    measuredCount,
+    sessions, activeSession, activeSessionId, setActiveSessionId,
+    createSession, recordMeasurement, undoLastMeasurement, undoStack,
+    chartData, measuredCount,
   } = useTuningSession(null);
 
-  const [userName, setUserName] = useState("");
+  const [userName,        setUserName]        = useState("");
   const [showSessionList, setShowSessionList] = useState(false);
+  const [autoAdvance,     setAutoAdvance]     = useState(true);
 
   const activeSessionIdRef = useRef(activeSessionId);
   useEffect(() => { activeSessionIdRef.current = activeSessionId; }, [activeSessionId]);
 
-  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const matchedDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingMatchRef = useRef<PitchResult | null>(null);
-
   const seqNextRef = useRef(seq.next);
   useEffect(() => { seqNextRef.current = seq.next; }, [seq.next]);
 
-  const clearTimers = useCallback(() => {
-    if (advanceTimerRef.current) { clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
-    if (matchedDebounceRef.current) { clearTimeout(matchedDebounceRef.current); matchedDebounceRef.current = null; }
-    pendingMatchRef.current = null;
-  }, []);
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoAdvanceRef  = useRef(autoAdvance);
+  useEffect(() => { autoAdvanceRef.current = autoAdvance; }, [autoAdvance]);
 
+  // 건반 변경 시 자동진행 타이머 취소
   useEffect(() => {
-    clearTimers();
-    return clearTimers;
-  }, [seq.targetKeyIndex, clearTimers]);
+    if (advanceTimerRef.current) {
+      clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = null;
+    }
+  }, [seq.targetKeyIndex]);
 
-  // ─── 세션 보장 헬퍼 ───────────────────────────────────────────────
   const ensureSession = useCallback(async (): Promise<string | null> => {
     if (activeSessionIdRef.current) return activeSessionIdRef.current;
     const s = await createSession();
@@ -102,153 +121,76 @@ export default function ManualPage() {
     return null;
   }, [createSession]);
 
-  // ─── 자동 진행 헬퍼 ──────────────────────────────────────────────
-  const scheduleAdvance = useCallback(() => {
-    if (!autoAdvanceRef.current) return;
-    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
-    advanceTimerRef.current = setTimeout(() => {
-      seqNextRef.current();
-    }, 1200);
-  }, []);
-
-  // ─── 기록 + 상태 업데이트 헬퍼 ───────────────────────────────────
-  const commitMeasurement = useCallback(async (keyIndex: number, cents: number, freq: number) => {
+  const handleConfirmed = useCallback(async (r: typeof result) => {
+    if (!r || r.finalCents === null) return;
     await ensureSession();
-    recordMeasurement(keyIndex, cents, freq);
-    setMatchState({ kind: "matched", cents });
-    scheduleAdvance();
-  }, [ensureSession, recordMeasurement, scheduleAdvance]);
-
-  // ─── 28~88번: usePitchDetector 콜백 ──────────────────────────────
-  const handlePitchDetected = useCallback((result: PitchResult) => {
-    if (result.confidence < 0.55) return;
-    const target = targetKeyRef.current;
-
-    // 저음 구간은 이 콜백 무시 (useTargetedStrobe가 담당)
-    if (isLowRange(target)) return;
-
-    if (result.keyIndex !== target) {
-      pendingMatchRef.current = null;
-      if (matchedDebounceRef.current) { clearTimeout(matchedDebounceRef.current); matchedDebounceRef.current = null; }
-      setMatchState({ kind: "wrong", detectedKeyIndex: result.keyIndex, detectedCents: result.cents });
-      return;
+    recordMeasurement(r.keyIndex, r.finalCents, r.frequency);
+    toast.success(
+      `${r.noteName}${r.octave} (건반 ${r.keyIndex + 1}) → ${r.finalCents > 0 ? "+" : ""}${r.finalCents.toFixed(1)}¢`,
+      { duration: 1800 }
+    );
+    if (autoAdvanceRef.current) {
+      advanceTimerRef.current = setTimeout(() => { seqNextRef.current(); }, 1000);
     }
+  }, [ensureSession, recordMeasurement]);
 
-    // 목표 일치 → 800ms 디바운스
-    pendingMatchRef.current = result;
-    if (matchedDebounceRef.current) clearTimeout(matchedDebounceRef.current);
-    matchedDebounceRef.current = setTimeout(() => {
-      const p = pendingMatchRef.current;
-      if (!p || p.keyIndex !== targetKeyRef.current) return;
-      // 절대 cent 그대로 저장 (usePitchDetector는 이미 절대 cent 반환)
-      commitMeasurement(p.keyIndex, p.cents, p.frequency);
-      pendingMatchRef.current = null;
-    }, 800);
-  }, [commitMeasurement]);
-
-  const { isListening, startListening, stopListening, error, stream, audioContext } =
-    usePitchDetector(handlePitchDetected, 4096);
+  const { isListening, result, startListening, stopListening, error } =
+    useCompositeTuner(seq.targetKeyIndex, handleConfirmed);
 
   useWakeLock(isListening);
 
-  // ─── 1~27번: useTargetedStrobe ────────────────────────────────────
-  // 저음 구간일 때만 targetKeyIndex를 전달, 아니면 null
-  const strobeTarget = isLowRange(seq.targetKeyIndex) ? seq.targetKeyIndex : null;
-  const strobe = useTargetedStrobe(
-    isListening ? stream : null,
-    isListening ? audioContext : null,
-    strobeTarget,
-    { stableDurationMs: 800, fftSize: 4096 }
-  );
-
-  // strobeCents가 새로 확정되면 기록
-  const prevStrobeCentsRef = useRef<number | null>(null);
-  useEffect(() => {
-    const c = strobe.strobeCents;
-    if (c === null || c === prevStrobeCentsRef.current) return;
-    if (!isLowRange(targetKeyRef.current)) return;
-
-    prevStrobeCentsRef.current = c;
-    const keyIndex = targetKeyRef.current;
-    const freq = PIANO_KEYS[keyIndex]?.freq ?? 0;
-    // 절대 cent 저장 (useTargetedStrobe가 이미 기본음 기준 절대 cent 반환)
-    commitMeasurement(keyIndex, c, freq);
-  }, [strobe.strobeCents, commitMeasurement]);
-
-  // 목표 음 변경 시 strobe prev 초기화
-  useEffect(() => {
-    prevStrobeCentsRef.current = null;
-  }, [seq.targetKeyIndex]);
-
   const toggleListening = async () => {
-    if (!activeSessionIdRef.current) {
-      const s = await createSession();
-      if (s) activeSessionIdRef.current = s.id;
-    }
     if (isListening) stopListening();
-    else await startListening();
+    else {
+      if (!activeSessionIdRef.current) {
+        const s = await createSession();
+        if (s) activeSessionIdRef.current = s.id;
+      }
+      await startListening();
+    }
   };
 
   const targetKey = PIANO_KEYS[seq.targetKeyIndex];
-  const isLow = isLowRange(seq.targetKeyIndex);
+  const inTune    = result ? Math.abs(result.liveCents) <= 2  : false;
+  const warnRange = result ? Math.abs(result.liveCents) <= 8  : false;
 
-  // 저음 구간 상태 표시용
-  const strobeMatchState: ManualMatchState = (() => {
-    if (!isLow) return matchState;
-    if (!isListening) return { kind: "idle" };
-    if (!strobe.signalOk) return { kind: "idle" };
-    if (strobe.isCapturing) return { kind: "idle" };
-    if (strobe.strobeCents !== null) return { kind: "matched", cents: strobe.strobeCents };
-    if (strobe.liveCents !== null) return { kind: "matched", cents: strobe.liveCents };
-    return { kind: "idle" };
-  })();
-
-  const displayMatchState = isLow ? strobeMatchState : matchState;
+  // 측정된 건반인지
+  const isMeasured = activeSession
+    ? seq.targetKeyIndex in (activeSession.measurements as Record<number, unknown>)
+    : false;
 
   return (
-    <div
-      className="min-h-screen bg-muted/50 flex flex-col"
-      style={{ fontFamily: "'Noto Sans KR', sans-serif" }}
-    >
+    <div className="min-h-screen bg-muted/50 flex flex-col" style={{ fontFamily: "'Noto Sans KR', sans-serif" }}>
+
       {/* 헤더 */}
       <header className="bg-card border-b border-border px-4 py-3 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+          <div className="w-8 h-8 bg-precision rounded-lg flex items-center justify-center">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
-              <path d="M9 18V5l12-2v13" />
-              <circle cx="6" cy="18" r="3" />
-              <circle cx="18" cy="16" r="3" />
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+              <path d="M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12" />
             </svg>
           </div>
           <div>
-            <h1 className="text-base font-bold text-foreground leading-tight">수동 조율</h1>
-            <p className="text-xs text-muted-foreground/80">
-              {isLow
-                ? `저음 스트로브 모드 (1~27번) · 배음 ${strobe.partial ?? "?"}배`
-                : "목표 음 → 건반 → 기록"}
-            </p>
+            <h1 className="text-base font-bold text-foreground leading-tight">복합 조율</h1>
+            <p className="text-xs text-muted-foreground/80">YIN · Goertzel 교차검증 · 스트로브 확정</p>
           </div>
         </div>
-
-        {/* 모드 전환 */}
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
-          <Link
-            to="/"
-            className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors"
-          >
-            자동
-          </Link>
-          <span className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">
-            수동
-          </span>
+          <Link to="/"       className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">자동</Link>
+          <Link to="/manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">수동</Link>
+          <span                className="px-3 py-1 text-xs font-bold rounded-md bg-card text-precision shadow-sm">복합</span>
+          <Link to="/reference" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">기준음</Link>
         </nav>
       </header>
 
       <main className="flex-1 container max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
-        {/* 구간 선택 */}
+
+        {/* 구간 탭 */}
         <SectionTabs section={seq.section} onChange={seq.setSection} />
 
-        {/* 목표 음 + 화살표 */}
+        {/* 목표 건반 바 */}
         <TargetNoteBar
           keyIndex={seq.targetKeyIndex}
           indexInOrder={seq.indexInOrder}
@@ -257,119 +199,164 @@ export default function ManualPage() {
           canNext={seq.canNext}
           onPrev={seq.prev}
           onNext={seq.next}
+          isMeasured={isMeasured}
         />
 
-        {/* 저음 구간: 스트로브 진행 표시 */}
-        {isLow && isListening && (
-          <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-sm">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                스트로브 분석 ({strobe.analysisFreq ? `${strobe.analysisFreq.toFixed(1)} Hz` : "—"})
-              </span>
-              <span className={cn(
-                "text-xs font-bold px-2 py-0.5 rounded-full",
-                strobe.signalOk ? "bg-green-100 text-green-700" : "bg-muted text-muted-foreground"
-              )}>
-                {strobe.signalOk ? "신호 감지" : "신호 없음"}
-              </span>
-            </div>
-            {strobe.isCapturing && (
-              <div className="w-full bg-muted rounded-full h-1.5 mt-1">
+        {/* 메인 피치 표시 */}
+        <div className={cn(
+          "bg-card border rounded-xl px-5 py-4 shadow-sm transition-colors",
+          result?.finalCents !== null && result?.finalCents !== undefined
+            ? "border-in-tune/60 bg-in-tune/5"
+            : result?.crossValid
+            ? "border-precision/30"
+            : "border-border"
+        )}>
+          {/* cents 큰 숫자 */}
+          <div className="text-center mb-2">
+            <span
+              className={cn(
+                "text-6xl font-black tabular-nums transition-colors duration-100",
+                inTune    ? "text-in-tune"
+                : warnRange ? "text-warn"
+                : result    ? "text-off"
+                : "text-muted-foreground/25"
+              )}
+              style={{ fontFamily: "'JetBrains Mono', monospace" }}
+            >
+              {result
+                ? `${result.liveCents > 0 ? "+" : ""}${result.liveCents.toFixed(1)}`
+                : "0.0"}
+            </span>
+            <span className="text-xl text-muted-foreground ml-1">¢</span>
+          </div>
+
+          {/* cents 바 */}
+          <CentsBar cents={result?.liveCents ?? 0} />
+
+          {/* 캡처 진행 */}
+          {result?.isCapturing && (
+            <div className="mt-2.5">
+              <div className="w-full bg-muted rounded-full h-1.5">
                 <div
-                  className="bg-primary h-1.5 rounded-full transition-all"
-                  style={{ width: `${strobe.captureProgress * 100}%` }}
+                  className="bg-precision h-1.5 rounded-full transition-all duration-100"
+                  style={{ width: `${result.captureProgress * 100}%` }}
                 />
               </div>
-            )}
-            {strobe.liveCents !== null && (
-              <p className="text-sm font-bold text-foreground mt-1">
-                실시간: {strobe.liveCents > 0 ? "+" : ""}{strobe.liveCents.toFixed(1)}¢
-              </p>
+              <p className="text-xs text-precision/80 mt-1 text-center">안정 측정 중...</p>
+            </div>
+          )}
+
+          {/* 확정 */}
+          {result?.finalCents !== null && result?.finalCents !== undefined && (
+            <div className="mt-2 text-center">
+              <span className="text-sm font-bold text-in-tune bg-in-tune/10 px-3 py-1 rounded-full">
+                ✓ 확정 {result.finalCents > 0 ? "+" : ""}{result.finalCents.toFixed(1)}¢
+              </span>
+            </div>
+          )}
+
+          {/* 신호 없음 */}
+          {isListening && !result && (
+            <p className="text-xs text-center text-muted-foreground mt-2">
+              마이크를 켜고 건반을 눌러주세요
+            </p>
+          )}
+        </div>
+
+        {/* 엔진 상세 */}
+        <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-sm">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">엔진 상세</h3>
+            {result && (
+              <span className={cn(
+                "flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold",
+                result.crossValid
+                  ? "bg-in-tune/15 text-in-tune"
+                  : "bg-warn/15 text-warn"
+              )}>
+                <span className={cn("w-1.5 h-1.5 rounded-full", result.crossValid ? "bg-in-tune" : "bg-warn")} />
+                {result.crossValid ? "교차검증 ✓" : "YIN 단독"}
+              </span>
             )}
           </div>
-        )}
+          <div className="space-y-1">
+            <EngineRow
+              label="YIN"
+              cents={result?.yinCents ?? null}
+              active={!!result}
+            />
+            <EngineRow
+              label="Goertzel"
+              cents={result?.goertzelCents ?? null}
+              active={!!result?.signalOk}
+            />
+            <EngineRow
+              label="복합 (확정값)"
+              cents={result?.liveCents ?? null}
+              active={!!result}
+              highlight={!!result?.crossValid}
+            />
+          </div>
+          {result && !result.crossValid && (
+            <p className="text-xs text-warn/80 mt-2 px-1">
+              YIN ↔ Goertzel 편차 큼 — Goertzel 단독 사용 중
+            </p>
+          )}
+        </div>
 
-        {/* 마이크 + 자동 진행 토글 */}
+        {/* 마이크 + 자동진행 */}
         <div className="flex items-center gap-2">
           <button
-            onClick={isPro ? toggleListening : () => sonnerToast.error("Pro 이상 등급에서 사용 가능합니다.")}
+            onClick={isPro ? toggleListening : undefined}
+            disabled={!isPro}
             title={!isPro ? "Pro 이상 등급에서 사용 가능합니다" : undefined}
             className={cn(
-              "flex-1 py-2.5 rounded-xl font-bold text-sm transition-all active:scale-[0.98]",
+              "flex-1 py-2.5 rounded-xl font-bold text-sm transition-all",
+              isPro && "active:scale-[0.98]",
               !isPro
-                ? "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
+                ? "bg-muted text-muted-foreground cursor-not-allowed opacity-60"
                 : isListening
-                  ? "bg-off text-white hover:bg-off/90"
-                  : "bg-primary text-white hover:bg-primary/90"
+                ? "bg-off text-white hover:bg-off/90"
+                : "bg-precision text-white hover:bg-precision/90"
             )}
           >
-            {isListening ? "■ 마이크 끄기" : !isPro ? "● 마이크 켜기 (잠금)" : "● 마이크 켜기"}
+            {!isPro ? "🔒 마이크 켜기"
+              : isListening ? "■ 마이크 끄기" : "● 마이크 켜기"}
           </button>
           <label className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-card border border-border cursor-pointer">
             <input
               type="checkbox"
               checked={autoAdvance}
-              onChange={(e) => setAutoAdvance(e.target.checked)}
-              className="w-4 h-4 accent-primary"
+              onChange={e => setAutoAdvance(e.target.checked)}
+              className="w-4 h-4 accent-precision"
             />
             <span className="text-xs text-foreground/85 whitespace-nowrap">자동 진행</span>
           </label>
         </div>
 
+        {!isPro && (
+          <p className="text-xs text-center text-muted-foreground">Pro 등급으로 변경하면 마이크를 사용할 수 있습니다.</p>
+        )}
+
         {error && (
-          <div className="px-3 py-2 rounded-lg bg-off/10 border border-off/40 text-xs text-off-foreground">
+          <div className="px-3 py-2 rounded-lg bg-off/10 border border-off/40 text-xs text-off">
             {error}
           </div>
         )}
 
-        {/* 상태 메시지 */}
-        <MatchStatus state={displayMatchState} isListening={isListening} />
+        {/* 되돌리기 */}
+        {undoStack.length > 0 && (
+          <button
+            onClick={() => undoLastMeasurement()}
+            className="flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-all"
+          >
+            ↩ 마지막 측정 취소
+          </button>
+        )}
 
-        {/* 그래프 */}
+        {/* 조율 커브 */}
         <div className="bg-card border border-border rounded-xl p-2 shadow-sm">
-          <TuningCurveChart
-            data={chartData}
-            activeKeyIndex={seq.targetKeyIndex}
-          />
-        </div>
-
-        {/* 하단 컨트롤 */}
-        <div className="grid grid-cols-3 gap-2">
-          <button
-            onClick={seq.prev}
-            disabled={!seq.canPrev}
-            className={cn(
-              "py-2.5 rounded-xl text-sm font-medium border transition-all active:scale-[0.98]",
-              seq.canPrev
-                ? "bg-card text-foreground border-border hover:bg-muted"
-                : "bg-muted/40 text-muted-foreground/40 border-border/60 cursor-not-allowed"
-            )}
-          >
-            ◀ 이전
-          </button>
-          <button
-            onClick={() => {
-              clearTimers();
-              setMatchState({ kind: "idle" });
-              if (seq.canNext) seq.next();
-              else sonnerToast("이 구간의 마지막 음입니다.");
-            }}
-            className="py-2.5 rounded-xl text-sm font-medium border bg-card text-muted-foreground border-border hover:bg-muted transition-all active:scale-[0.98]"
-          >
-            건너뛰기
-          </button>
-          <button
-            onClick={seq.next}
-            disabled={!seq.canNext}
-            className={cn(
-              "py-2.5 rounded-xl text-sm font-medium border transition-all active:scale-[0.98]",
-              seq.canNext
-                ? "bg-card text-foreground border-border hover:bg-muted"
-                : "bg-muted/40 text-muted-foreground/40 border-border/60 cursor-not-allowed"
-            )}
-          >
-            다음 ▶
-          </button>
+          <TuningCurveChart data={chartData} activeKeyIndex={seq.targetKeyIndex} />
         </div>
 
         {/* 세션 + 내보내기 */}
@@ -378,22 +365,18 @@ export default function ManualPage() {
             <div className="relative flex-1 mr-2">
               <button
                 onClick={() => setShowSessionList(v => !v)}
-                className="flex items-center gap-1.5 text-sm text-foreground/85 hover:text-foreground max-w-full"
+                className="flex items-center gap-1.5 text-sm text-foreground/85 hover:text-foreground"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                   <polyline points="14 2 14 8 20 8" />
                 </svg>
-                <span className="font-semibold truncate max-w-[180px]">
-                  {activeSession?.name || "세션 없음"}
-                </span>
+                <span className="font-semibold truncate max-w-[180px]">{activeSession?.name || "세션 없음"}</span>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <polyline points="6 9 12 15 18 9" />
                 </svg>
               </button>
-              <p className="text-xs text-muted-foreground/80 mt-0.5">
-                측정 {measuredCount} / 88 · 현재 목표 {targetKey.noteName}{targetKey.octave} (건반 {targetKey.keyNumber})
-              </p>
+              <p className="text-xs text-muted-foreground/80 mt-0.5">측정 {measuredCount} / 88</p>
               {showSessionList && sessions.length > 0 && (
                 <div className="absolute top-full left-0 mt-1 w-64 bg-card border border-border rounded-xl shadow-lg z-20 max-h-48 overflow-y-auto">
                   {sessions.map(s => (
@@ -416,7 +399,7 @@ export default function ManualPage() {
             </div>
             <button
               onClick={() => { createSession(); setShowSessionList(false); }}
-              className="px-3 py-1.5 text-sm bg-primary text-white rounded-lg font-medium whitespace-nowrap"
+              className="px-3 py-1.5 text-sm bg-precision text-white rounded-lg font-medium whitespace-nowrap"
             >
               + 새 세션
             </button>
@@ -427,41 +410,33 @@ export default function ManualPage() {
               placeholder="성명 입력 (PDF에 표시)"
               value={userName}
               onChange={e => setUserName(e.target.value)}
-              className="w-full text-sm border border-border rounded-lg px-3 py-2 outline-none focus:border-primary/60"
+              className="w-full text-sm border border-border rounded-lg px-3 py-2 outline-none focus:border-precision/60"
             />
             <div className="flex gap-2">
               <button
-                onClick={() => activeSession && exportToPdf(
-                  activeSession.name,
-                  userName,
-                  activeSession.measurements as any,
-                )}
+                onClick={() => activeSession && exportToPdf(activeSession.name, userName, activeSession.measurements as any)}
                 disabled={measuredCount === 0}
                 className={cn(
                   "flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-bold",
                   measuredCount > 0 ? "bg-primary text-white" : "bg-muted text-muted-foreground/60 cursor-not-allowed"
                 )}
-              >
-                📄 PDF
-              </button>
+              >📄 PDF</button>
               <button
-                onClick={() => activeSession && exportToImage(
-                  activeSession.name,
-                  userName,
-                  activeSession.measurements as any,
-                )}
+                onClick={() => activeSession && exportToImage(activeSession.name, userName, activeSession.measurements as any)}
                 disabled={measuredCount === 0}
                 className={cn(
                   "flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-bold",
                   measuredCount > 0 ? "bg-in-tune text-white" : "bg-muted text-muted-foreground/60 cursor-not-allowed"
                 )}
-              >
-                🖼️ 이미지
-              </button>
+              >🖼️ 이미지</button>
             </div>
           </div>
         </div>
+
       </main>
     </div>
   );
 }
+
+// handleConfirmed 타입 추론용 헬퍼
+type result = ReturnType<typeof useCompositeTuner>["result"];
