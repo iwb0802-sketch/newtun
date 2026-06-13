@@ -261,7 +261,7 @@ export default function Home() {
               to="/manual"
               className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors"
             >
-              수동
+              복합
             </Link>
           </nav>
           <button onClick={() => setShowSessions(!showSessions)}
