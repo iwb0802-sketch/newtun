@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   applyHannWindow, detectPitchYIN, correctOctaveByHPS,
-  getRMS, median,
+  getRMS, median, getFFTPeakFreq,
 } from "@/lib/tuner/pitchEngine";
 
 export const PIANO_KEYS = Array.from({ length: 88 }, (_, i) => {
@@ -147,12 +147,32 @@ export function usePitchDetector(
 
         // Hann 윈도우 적용한 시간영역 버퍼로 YIN
         const winBuf = applyHannWindow(buf);
-        const fYin = detectPitchYIN(winBuf, ctx.sampleRate, 26, 5000, 0.12);
+
+        // 1차: FFT peak으로 rough 주파수 추정 → zone 판단
+        analyser.getFloatFrequencyData(spec as Float32Array<ArrayBuffer>);
+        const roughFreq = getFFTPeakFreq(spec, ctx.sampleRate, analyser.fftSize, 200, 8000);
+
+        // zone별 YIN 파라미터
+        // C6 = 1047Hz (keyIndex 63), C7 = 2093Hz (keyIndex 75)
+        let yinFmin: number, yinFmax: number, yinThreshold: number;
+        if (roughFreq >= 1047) {
+          // 고음 (C6+): 배음 희박, decay 빠름 → threshold 낮춰서 민감도 ↑, HPS 보정 스킵
+          yinFmin = 450; yinFmax = 6000; yinThreshold = 0.08;
+        } else if (roughFreq >= 200) {
+          // 중음: 기존 세팅 유지
+          yinFmin = 26; yinFmax = 5000; yinThreshold = 0.12;
+        } else {
+          // 저음: 기존 세팅 유지
+          yinFmin = 26; yinFmax = 5000; yinThreshold = 0.12;
+        }
+
+        const fYin = detectPitchYIN(winBuf, ctx.sampleRate, yinFmin, yinFmax, yinThreshold);
 
         if (fYin > 0) {
-          // 스펙트럼 가져와서 HPS 옵타브 보정
-          analyser.getFloatFrequencyData(spec as Float32Array<ArrayBuffer>);
-          const fCorrected = correctOctaveByHPS(fYin, spec, ctx.sampleRate, analyser.fftSize, 5);
+          // 고음은 HPS 옥타브 보정 스킵 (배음 패턴 단순해서 역효과)
+          const fCorrected = roughFreq >= 1047
+            ? fYin
+            : correctOctaveByHPS(fYin, spec, ctx.sampleRate, analyser.fftSize, 5);
 
           const r = freqToCentOffset(fCorrected);
           if (r) {

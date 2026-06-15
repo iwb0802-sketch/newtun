@@ -383,6 +383,26 @@ export function getStabilityConfig(zone: Zone): StabilityConfig {
 }
 
 // ─── 위상차 → cent ───────────────────────────────────────────────────
+
+// --- FFT Peak freq (rough zone detection before YIN) ---
+export function getFFTPeakFreq(
+  spec: Float32Array,
+  sr: number,
+  fftSize: number,
+  fMin = 200,
+  fMax = 8000
+): number {
+  const binHz = sr / fftSize;
+  const binMin = Math.max(1, Math.floor(fMin / binHz));
+  const binMax = Math.min(spec.length - 1, Math.ceil(fMax / binHz));
+  let peakBin = binMin;
+  let peakVal = -Infinity;
+  for (let i = binMin; i <= binMax; i++) {
+    if (spec[i] > peakVal) { peakVal = spec[i]; peakBin = i; }
+  }
+  return peakBin * binHz;
+}
+
 export function centsFromPhaseDelta(
   prevPhase: number,
   currPhase: number,
