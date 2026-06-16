@@ -16,7 +16,8 @@ import {
 } from "@/lib/tuner/pitchEngine";
 
 export interface StrobeState {
-  strobeCents: number | null;
+  strobeCents: number | null;      // 500ms 수집 후 확정값
+  liveCents: number | null;        // 매 프레임 실시간 값 (스트로브 애니메이션용)
   isCapturing: boolean;
   captureProgress: number;
   currentNote: string | null;
@@ -33,6 +34,7 @@ export function useStrobeDetector(
   referenceKeyIndex: number | null = null
 ): StrobeState {
   const [strobeCents, setStrobeCents] = useState<number | null>(null);
+  const [liveCents, setLiveCents] = useState<number | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
   const [captureProgress, setCaptureProgress] = useState(0);
   const [currentNote, setCurrentNote] = useState<string | null>(null);
@@ -61,6 +63,7 @@ export function useStrobeDetector(
     captureStartRef.current = null;
     lastKeyRef.current = referenceKeyIndex;
     setStrobeCents(null);
+    setLiveCents(null);
     setIsCapturing(false);
     setCaptureProgress(0);
     if (referenceKeyIndex !== null) {
@@ -127,9 +130,9 @@ export function useStrobeDetector(
         return;
       }
 
-      // === 자동피치와 동일한 알고리즘: Hann + YIN + HPS ===
+      // === YIN + HPS ===
       const winBuf = applyHannWindow(buf);
-      const fYin = detectPitchYIN(winBuf, audioContext.sampleRate, 26, 5000, 0.12);
+      const fYin = detectPitchYIN(winBuf, audioContext.sampleRate, 26, 5000, 0.15);
       if (fYin <= 0) {
         rafRef.current = requestAnimationFrame(detect);
         return;
@@ -137,18 +140,22 @@ export function useStrobeDetector(
       an.getFloatFrequencyData(spec as Float32Array<ArrayBuffer>);
       const fCorrected = correctOctaveByHPS(fYin, spec, audioContext.sampleRate, an.fftSize, 5);
 
-      const r = freqToCentOffset(fCorrected);
-      if (!r) { rafRef.current = requestAnimationFrame(detect); return; }
-
-      // 타겟 건반에 대한 cent 편차 (다른 건반이면 옥타브 차 고려)
+      // 타겟 건반 기준 cent 편차
       const targetFreq = PIANO_KEYS[refKey].freq;
-      const cent = 1200 * Math.log2(fCorrected / targetFreq);
+      const rawCent = 1200 * Math.log2(fCorrected / targetFreq);
 
-      // 옥타브 차 이상 벗어나면 무시 (잘못된 건반 검출)
-      if (Math.abs(cent) > 80) {
+      // 옥타브 정규화 — 가장 가까운 옥타브로 맞춤 (-600 ~ +600¢ → -50 ~ +50¢ 범위)
+      const octaveShift = Math.round(rawCent / 1200);
+      const cent = rawCent - octaveShift * 1200;
+
+      // ±60¢ 이상 벗어나면 다른 건반 — 무시
+      if (Math.abs(cent) > 60) {
         rafRef.current = requestAnimationFrame(detect);
         return;
       }
+
+      // 매 프레임 실시간 값 → 스트로브 애니메이션용
+      setLiveCents(Math.round(cent * 10) / 10);
 
       if (captureStartRef.current === null) {
         captureStartRef.current = Date.now();
@@ -161,14 +168,15 @@ export function useStrobeDetector(
 
       if (elapsed >= stableDurationMs && captureBufferRef.current.length >= MIN_SAMPLES) {
         const medRaw = median(captureBufferRef.current);
-        if (!isFinite(medRaw)) { rafRef.current = requestAnimationFrame(detect); return; }
-        const med = Math.round(medRaw * 10) / 10;
-        setStrobeCents(med);
+        if (isFinite(medRaw)) {
+          const med = Math.round(medRaw * 10) / 10;
+          setStrobeCents(med);
+        }
         setIsCapturing(false);
         setCaptureProgress(0);
+        // 버퍼만 리셋 — 계속 새로 수집 (실시간 갱신)
         captureBufferRef.current = [];
         captureStartRef.current = null;
-        peakRmsRef.current = 0;
       }
 
       rafRef.current = requestAnimationFrame(detect);
@@ -185,11 +193,12 @@ export function useStrobeDetector(
       peakRmsRef.current = 0;
       captureStartRef.current = null;
       captureBufferRef.current = [];
+      setLiveCents(null);
     };
   }, [stream, audioContext, stableDurationMs, fftSize]);
 
   return {
-    strobeCents, isCapturing, captureProgress,
+    strobeCents, liveCents, isCapturing, captureProgress,
     currentNote, currentKeyIndex, analysisFreq,
     partial: 1,
   };

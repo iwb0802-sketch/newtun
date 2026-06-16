@@ -57,6 +57,7 @@ export default function StrobeManualPage() {
   // 스트로브 — 선택 건반 기준으로 실시간 추적
   const {
     strobeCents,
+    liveCents,
     isCapturing,
     captureProgress,
     currentNote,
@@ -230,7 +231,7 @@ export default function StrobeManualPage() {
           {/* 스트로브 바 */}
           <div className="px-0">
             <StrobeTuner
-              detectedCents={pendingCents}
+              detectedCents={liveCents}
               stableCents={strobeCents}
               isCapturing={isCapturing}
               isActive={isListening}
