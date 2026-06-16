@@ -5,7 +5,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { usePitchDetector, PIANO_KEYS } from "@/hooks/usePitchDetector";
-import { useStrobeDetector } from "@/hooks/useStrobeDetector";
+import { median } from "@/lib/tuner/pitchEngine";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
@@ -138,29 +138,35 @@ export default function PrecisionPage() {
     }, 500);
   }, [onPitchActive, onSilenceDetected]);
 
-  const { isListening, currentPitch, startListening, stopListening, error, analyserRef: pitchAnalyserRef } =
+  const { isListening, currentPitch, startListening, stopListening, error } =
     usePitchDetector(handlePitch);
 
-  const { strobeCents, startListening: strobeStart, stopListening: strobeStop } = useStrobeDetector(
-    pendingKeyIndex,
-    pitchAnalyserRef  // analyser 공유 (마이크 이중 열기 방지)
-  );
+  // ── 스트로브용 슬라이딩 윈도우 (currentPitch 재사용, 마이크 추가 없음) ──
+  const STROBE_WINDOW_MS = 300;
+  const strobeWindowRef = useRef<Array<{ t: number; c: number }>>([]);
+  const [strobeCents, setStrobeCents] = useState<number | null>(null);
 
-  // pitchDetector 마이크 on/off 따라 스트로브 루프도 동기화
   useEffect(() => {
-    if (isListening) {
-      const t = setTimeout(() => { strobeStart(); }, 100);
-      return () => clearTimeout(t);
-    } else {
-      strobeStop();
+    if (!currentPitch || !isListening || currentPitch.keyIndex !== pendingKeyIndex) {
+      strobeWindowRef.current = [];
+      setStrobeCents(null);
+      return;
     }
-  }, [isListening, strobeStart, strobeStop]);
+    const now = Date.now();
+    strobeWindowRef.current.push({ t: now, c: currentPitch.cents });
+    strobeWindowRef.current = strobeWindowRef.current.filter(s => now - s.t <= STROBE_WINDOW_MS);
+    const samples = strobeWindowRef.current;
+    const elapsed = samples.length > 1 ? now - samples[0].t : 0;
+    if (elapsed >= STROBE_WINDOW_MS && samples.length >= 4) {
+      const med = Math.round(median(samples.map(s => s.c)) * 10) / 10;
+      if (isFinite(med)) setStrobeCents(med);
+    }
+  }, [currentPitch, isListening, pendingKeyIndex]);
 
   // 스트로브 확정값 추가 - 새 값이 들어올 때마다 저장
   const prevStrobeRef = useRef<number | null>(null);
   useEffect(() => {
     if (strobeCents === null) {
-      // 스트로브 리셋 시 prevRef도 리셋
       prevStrobeRef.current = null;
       return;
     }

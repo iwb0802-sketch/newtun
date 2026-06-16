@@ -14,7 +14,7 @@ import TuningCurveChart from "@/components/tuner/TuningCurveChart";
 import { usePitchDetector, PIANO_KEYS, PitchResult } from "@/hooks/usePitchDetector";
 import { useTuningSession } from "@/hooks/useTuningSession";
 import { exportToPdf, exportToImage } from "@/lib/tuner/exportPdf";
-import { useStrobeDetector } from "@/hooks/useStrobeDetector";
+import { median } from "@/lib/tuner/pitchEngine";
 
 
 import { useWakeLock } from "@/hooks/useWakeLock";
@@ -134,29 +134,48 @@ export default function Home() {
     }
   }, [recordMeasurement]);
 
-  const { isListening, currentPitch, startListening, stopListening, error, isRecovering, analyserRef: pitchAnalyserRef } =
+  const { isListening, currentPitch, startListening, stopListening, error, isRecovering } =
     usePitchDetector(handlePitchDetected, fftSize);
 
   // 화면 꺼짐 방지 - 마이크 켜지면 자동 활성화
   useWakeLock(isListening);
 
-  // 스트로브 — usePitchDetector analyser 공유 (마이크 이중 열기 방지)
-  const { strobeCents: stableCents, isCapturing, captureProgress, currentNote: strobeNote, currentKeyIndex: strobeKeyIndex, analysisFreq: strobeAnalysisFreq, partial: strobePartial,
-    startListening: strobeStart, stopListening: strobeStop } = useStrobeDetector(
-    currentPitch?.keyIndex ?? null,
-    pitchAnalyserRef  // analyser 공유
-  );
+  // ── 스트로브용 슬라이딩 윈도우 (currentPitch 재사용, 마이크 추가 없음) ──
+  const STROBE_WINDOW_MS = 300;
+  const strobeWindowRef = useRef<Array<{ t: number; c: number; ki: number }>>([]);
+  const [stableCents, setStableCents] = useState<number | null>(null);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [captureProgress, setCaptureProgress] = useState(0);
 
-  // pitchDetector 마이크 on/off 따라 스트로브 루프도 동기화
   useEffect(() => {
-    if (isListening) {
-      // analyser가 준비될 때까지 약간 대기
-      const t = setTimeout(() => { strobeStart(); }, 100);
-      return () => clearTimeout(t);
-    } else {
-      strobeStop();
+    if (!currentPitch || !isListening) {
+      strobeWindowRef.current = [];
+      setStableCents(null);
+      setIsCapturing(false);
+      setCaptureProgress(0);
+      return;
     }
-  }, [isListening, strobeStart, strobeStop]);
+    const now = Date.now();
+    strobeWindowRef.current.push({ t: now, c: currentPitch.cents, ki: currentPitch.keyIndex });
+    strobeWindowRef.current = strobeWindowRef.current.filter(s => now - s.t <= STROBE_WINDOW_MS);
+    const samples = strobeWindowRef.current;
+    const elapsed = samples.length > 1 ? now - samples[0].t : 0;
+    const progress = Math.min(elapsed / STROBE_WINDOW_MS, 1);
+    setCaptureProgress(progress);
+    if (progress >= 1 && samples.length >= 4) {
+      setIsCapturing(false);
+      const med = Math.round(median(samples.map(s => s.c)) * 10) / 10;
+      if (isFinite(med)) setStableCents(med);
+    } else {
+      setIsCapturing(true);
+    }
+  }, [currentPitch, isListening]);
+
+  // strobeNote/KeyIndex/AnalysisFreq — currentPitch에서 직접 파생
+  const strobeNote = currentPitch ? `${currentPitch.noteName}${currentPitch.octave}` : null;
+  const strobeKeyIndex = currentPitch?.keyIndex ?? null;
+  const strobeAnalysisFreq = currentPitch?.frequency ?? null;
+  const strobePartial = 1;
 
   // 스트로브 1회 자동저장 - 안정값 감지 시 자동으로 파란 점에 기록
   const lastAutoStrobeKeyRef = useRef<number | null>(null);
