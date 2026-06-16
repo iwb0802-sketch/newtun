@@ -9,12 +9,18 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as StrobeManualRouteImport } from './routes/strobe-manual'
 import { Route as ManualRouteImport } from './routes/manual'
 import { Route as IndexRouteImport } from './routes/index'
 
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
   id: '/reset-password',
   path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StrobeManualRoute = StrobeManualRouteImport.update({
+  id: '/strobe-manual',
+  path: '/strobe-manual',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ManualRoute = ManualRouteImport.update({
@@ -31,36 +37,41 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/manual': typeof ManualRoute
+  '/strobe-manual': typeof StrobeManualRoute
   '/reset-password': typeof ResetPasswordRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/manual': typeof ManualRoute
+  '/strobe-manual': typeof StrobeManualRoute
   '/reset-password': typeof ResetPasswordRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/manual': typeof ManualRoute
+  '/strobe-manual': typeof StrobeManualRoute
   '/reset-password': typeof ResetPasswordRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/manual' | '/reset-password'
+  fullPaths: '/' | '/manual' | '/strobe-manual' | '/reset-password'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/manual' | '/reset-password'
-  id: '__root__' | '/' | '/manual' | '/reset-password'
+  to: '/' | '/manual' | '/strobe-manual' | '/reset-password'
+  id: '__root__' | '/' | '/manual' | '/strobe-manual' | '/reset-password'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ManualRoute: typeof ManualRoute
+  StrobeManualRoute: typeof StrobeManualRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ManualRoute: ManualRoute,
+  StrobeManualRoute: StrobeManualRoute,
   ResetPasswordRoute: ResetPasswordRoute,
 }
 export const routeTree = rootRouteImport
