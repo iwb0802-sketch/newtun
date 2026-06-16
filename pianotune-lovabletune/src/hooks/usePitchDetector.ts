@@ -1,20 +1,16 @@
 /**
- * usePitchDetector.ts
- * iOS Safari 완전 호환 + PT-100식 옵타브 보정
+ * usePitchDetector.ts (v3 — useStrobeDetector 마이크 패턴 기반 완전 재작성)
  *
- * 변경점 (v2):
- * - YIN으로 1차 추정 → HPS 스펙트럼 비교로 옵타브 오류 보정 (A3→A5 해결)
- * - Hann 윈도우 적용 (스펙트럼 누설 ↓)
- * - 주파수 범위 제한 (27Hz–5000Hz)
- * - 기존 majority + median 안정화 로직 유지
+ * - useStrobeDetector의 검증된 마이크/AudioContext 패턴 그대로 사용
+ * - 전 건반 YIN 감지 → freqToCentOffset으로 keyIndex 자동 추출
+ * - 슬라이딩 윈도우 안정화 (WINDOW=8, MIN_MATCH=4)
+ * - return shape 기존 유지 (Home.tsx, PrecisionPage.tsx 호환)
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  applyHannWindow, detectPitchYIN, correctOctaveByHPS,
-  getRMS, median, getFFTPeakFreq,
-} from "@/lib/tuner/pitchEngine";
+import { detectPitchYIN, getRMS, median } from "@/lib/tuner/pitchEngine";
 
+// ── 88건반 정의 (export: useStrobeDetector에서 import) ──────────────
 export const PIANO_KEYS = Array.from({ length: 88 }, (_, i) => {
   const midi = i + 21;
   const noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -25,6 +21,7 @@ export const PIANO_KEYS = Array.from({ length: 88 }, (_, i) => {
   return { midi, keyNumber: i + 1, noteName, octave, freq, isBlack };
 });
 
+// ── 주파수 → keyIndex + cents ────────────────────────────────────────
 export function freqToCentOffset(freq: number): {
   keyIndex: number; cents: number; note: typeof PIANO_KEYS[0];
 } | null {
@@ -36,6 +33,7 @@ export function freqToCentOffset(freq: number): {
   return { keyIndex, cents: (midiFloat - midiRound) * 100, note: PIANO_KEYS[keyIndex] };
 }
 
+// ── 타입 ─────────────────────────────────────────────────────────────
 export interface PitchResult {
   frequency: number; keyIndex: number; noteName: string;
   octave: number; cents: number; confidence: number;
@@ -54,161 +52,150 @@ export interface UsePitchDetectorReturn {
   analyserRef: { readonly current: AnalyserNode | null };
 }
 
+// ── 상수 ─────────────────────────────────────────────────────────────
+const MIN_RMS    = 0.005;  // useStrobeDetector와 동일
+const WINDOW     = 8;      // 슬라이딩 윈도우 크기
+const MIN_MATCH  = 4;      // 안정화 최소 일치
+
 export function usePitchDetector(
   onPitchDetected?: (result: PitchResult) => void,
-  fftSize: 4096 | 8192 = 4096
+  _fftSize: 4096 | 8192 = 4096   // 하위호환성 유지 (내부는 4096 고정)
 ): UsePitchDetectorReturn {
-  const [isListening, setIsListening] = useState(false);
+
+  const [isListening,  setIsListening]  = useState(false);
   const [currentPitch, setCurrentPitch] = useState<PitchResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isRecovering, setIsRecovering] = useState(false);
+  const [error,        setError]        = useState<string | null>(null);
 
-  const ctxRef = useRef<AudioContext | null>(null);
+  // 오디오 인프라 — useStrobeDetector 패턴 그대로
+  const ctxRef      = useRef<AudioContext | null>(null);
+  const streamRef   = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const bufRef = useRef<Float32Array | null>(null);
-  const specRef = useRef<Float32Array | null>(null);
-  const isRunningRef = useRef(false);
+  const rafRef      = useRef<number | null>(null);
+  const bufRef      = useRef<Float32Array | null>(null);
 
-  const recentKeys = useRef<number[]>([]);
+  // 안정화 버퍼
+  const recentKeys  = useRef<number[]>([]);
   const recentCents = useRef<number[]>([]);
-  const WINDOW = 10;
-  const MIN_MATCH = 5;
 
-  const stopListening = useCallback(() => {
-    isRunningRef.current = false;
-    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    streamRef.current = null;
-    analyserRef.current = null;
-    bufRef.current = null;
-    specRef.current = null;
-    recentKeys.current = [];
-    recentCents.current = [];
-    setIsListening(false);
-    setCurrentPitch(null);
-    setIsRecovering(false);
+  // onPitchDetected ref (클로저 stale 방지)
+  const onPitchRef = useRef(onPitchDetected);
+  useEffect(() => { onPitchRef.current = onPitchDetected; }, [onPitchDetected]);
+
+  // ── 감지 루프 (useStrobeDetector detect 패턴 기반) ────────────────
+  const startLoop = useCallback(() => {
+    const an = analyserRef.current;
+    if (!an || !bufRef.current) return;
+
+    const detect = () => {
+      // 매 프레임 ref 최신값으로 읽기 (useStrobeDetector 동일 패턴)
+      const analyser = analyserRef.current;
+      const buf      = bufRef.current;
+      if (!analyser || !buf) return;
+
+      // buf 크기 불일치 시 재할당
+      if (buf.length !== analyser.fftSize) {
+        bufRef.current = new Float32Array(analyser.fftSize);
+      }
+
+      const activeBuf = bufRef.current!;
+      analyser.getFloatTimeDomainData(activeBuf);
+      const rms = getRMS(activeBuf);
+
+      if (rms < MIN_RMS) {
+        recentKeys.current = [];
+        recentCents.current = [];
+        setCurrentPitch(null);
+        rafRef.current = requestAnimationFrame(detect);
+        return;
+      }
+
+      const sampleRate = analyser.context?.sampleRate ?? 48000;
+
+      // 전 건반 범위 YIN (A0=27Hz ~ C8=4186Hz)
+      const fRaw = detectPitchYIN(activeBuf, sampleRate, 27, 5000, 0.15);
+
+      if (fRaw > 0) {
+        const r = freqToCentOffset(fRaw);
+        if (r) {
+          recentKeys.current.push(r.keyIndex);
+          recentCents.current.push(r.cents);
+          if (recentKeys.current.length > WINDOW) {
+            recentKeys.current.shift();
+            recentCents.current.shift();
+          }
+
+          // 다수결
+          const counts: Record<number, number> = {};
+          recentKeys.current.forEach(k => { counts[k] = (counts[k] || 0) + 1; });
+          const [topKey, topCount] = Object.entries(counts)
+            .sort((a, b) => Number(b[1]) - Number(a[1]))[0];
+          const stableKi = parseInt(topKey);
+
+          if (Number(topCount) >= MIN_MATCH) {
+            const centsArr = recentKeys.current
+              .map((k, i) => k === stableKi ? recentCents.current[i] : null)
+              .filter((v): v is number => v !== null);
+            const stableCents = Math.round(median(centsArr) * 10) / 10;
+
+            const result: PitchResult = {
+              frequency:  fRaw,
+              keyIndex:   stableKi,
+              noteName:   PIANO_KEYS[stableKi].noteName,
+              octave:     PIANO_KEYS[stableKi].octave,
+              cents:      stableCents,
+              confidence: Number(topCount) / WINDOW,
+              rms,
+            };
+
+            if (result.confidence >= 0.5) {
+              setCurrentPitch(result);
+              onPitchRef.current?.(result);
+            }
+          }
+        }
+      }
+
+      rafRef.current = requestAnimationFrame(detect);
+    };
+
+    rafRef.current = requestAnimationFrame(detect);
   }, []);
 
+  const stopLoop = useCallback(() => {
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+  }, []);
+
+  // ── 마이크 시작 (useStrobeDetector startListening 패턴 그대로) ────
   const startListening = useCallback(async () => {
     try {
       setError(null);
-      setIsRecovering(false);
+
+      // 이미 열려 있으면 재사용
+      if (ctxRef.current && streamRef.current) {
+        startLoop();
+        setIsListening(true);
+        return;
+      }
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, autoGainControl: false, noiseSuppression: false },
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
       streamRef.current = stream;
 
-      const ctx = new AudioContext();
+      const ctx = new AudioContext();   // sampleRate 강제 없음 — useStrobeDetector 동일
       ctxRef.current = ctx;
-      if (ctx.state === "suspended") { await ctx.resume(); }
 
       const analyser = ctx.createAnalyser();
-      analyser.fftSize = fftSize;
+      analyser.fftSize = 4096;
       analyser.smoothingTimeConstant = 0;
       analyserRef.current = analyser;
+      bufRef.current = new Float32Array(analyser.fftSize);
 
       const src = ctx.createMediaStreamSource(stream);
       src.connect(analyser);
 
-      bufRef.current = new Float32Array(analyser.fftSize);
-      specRef.current = new Float32Array(analyser.frequencyBinCount);
-      isRunningRef.current = true;
       setIsListening(true);
-
-      const detect = () => {
-        if (!isRunningRef.current) return;
-        const ctx = ctxRef.current;
-        const analyser = analyserRef.current;
-        const buf = bufRef.current;
-        const spec = specRef.current;
-        if (!ctx || !analyser || !buf || !spec) return;
-
-        analyser.getFloatTimeDomainData(buf as Float32Array<ArrayBuffer>);
-        const rms = getRMS(buf);
-
-        if (rms < 0.001) {
-          recentKeys.current = [];
-          recentCents.current = [];
-          setCurrentPitch(null);
-          rafRef.current = requestAnimationFrame(detect);
-          return;
-        }
-
-        // Hann 윈도우 적용한 시간영역 버퍼로 YIN
-        const winBuf = applyHannWindow(buf);
-
-        // 1차: FFT peak으로 rough 주파수 추정 → zone 판단
-        analyser.getFloatFrequencyData(spec as Float32Array<ArrayBuffer>);
-        const roughFreq = getFFTPeakFreq(spec, ctx.sampleRate, analyser.fftSize, 200, 8000);
-
-        // zone별 YIN 파라미터
-        // C6 = 1047Hz (keyIndex 63), C7 = 2093Hz (keyIndex 75)
-        let yinFmin: number, yinFmax: number, yinThreshold: number;
-        if (roughFreq >= 1047) {
-          // 고음 (C6+): 배음 희박, decay 빠름 → threshold 낮춰서 민감도 ↑, HPS 보정 스킵
-          yinFmin = 450; yinFmax = 6000; yinThreshold = 0.08;
-        } else if (roughFreq >= 200) {
-          // 중음: 기존 세팅 유지
-          yinFmin = 26; yinFmax = 5000; yinThreshold = 0.12;
-        } else {
-          // 저음: 기존 세팅 유지
-          yinFmin = 26; yinFmax = 5000; yinThreshold = 0.12;
-        }
-
-        const fYin = detectPitchYIN(winBuf, ctx.sampleRate, yinFmin, yinFmax, yinThreshold);
-
-        if (fYin > 0) {
-          // 고음은 HPS 옥타브 보정 스킵 (배음 패턴 단순해서 역효과)
-          const fCorrected = roughFreq >= 1047
-            ? fYin
-            : correctOctaveByHPS(fYin, spec, ctx.sampleRate, analyser.fftSize, 5);
-
-          const r = freqToCentOffset(fCorrected);
-          if (r) {
-            recentKeys.current.push(r.keyIndex);
-            recentCents.current.push(r.cents);
-            if (recentKeys.current.length > WINDOW) {
-              recentKeys.current.shift();
-              recentCents.current.shift();
-            }
-
-            const counts: Record<number, number> = {};
-            recentKeys.current.forEach(k => { counts[k] = (counts[k] || 0) + 1; });
-            const [topKey, topCount] = Object.entries(counts)
-              .sort((a, b) => Number(b[1]) - Number(a[1]))[0];
-            const stableKi = parseInt(topKey);
-
-            if (Number(topCount) >= MIN_MATCH) {
-              const centsArr = recentKeys.current
-                .map((k, i) => k === stableKi ? recentCents.current[i] : null)
-                .filter((v): v is number => v !== null);
-              const stableCents = Math.round(median(centsArr) * 10) / 10;
-
-              const result: PitchResult = {
-                frequency: fCorrected,
-                keyIndex: stableKi,
-                noteName: PIANO_KEYS[stableKi].noteName,
-                octave: PIANO_KEYS[stableKi].octave,
-                cents: stableCents,
-                confidence: Number(topCount) / WINDOW,
-                rms,
-              };
-
-              if (result.confidence >= 0.55) {
-                setCurrentPitch(result);
-                onPitchDetected?.(result);
-              }
-            }
-          }
-        }
-
-        rafRef.current = requestAnimationFrame(detect);
-      };
-
-      rafRef.current = requestAnimationFrame(detect);
+      startLoop();
     } catch (err) {
       let msg = "마이크 접근 실패";
       if (err instanceof Error) {
@@ -225,37 +212,52 @@ export function usePitchDetector(
       setError(msg);
       setIsListening(false);
     }
-  }, [onPitchDetected, fftSize]);
+  }, [startLoop]);
 
+  const stopListening = useCallback(() => {
+    stopLoop();
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    ctxRef.current?.close();
+    ctxRef.current = null;
+    analyserRef.current = null;
+    bufRef.current = null;
+    recentKeys.current = [];
+    recentCents.current = [];
+    setIsListening(false);
+    setCurrentPitch(null);
+  }, [stopLoop]);
+
+  // visibilitychange — ctx resume (iOS Safari 대응)
   useEffect(() => {
     const handler = async () => {
       if (document.visibilityState !== "visible") return;
-      if (!isRunningRef.current) return;
+      if (!ctxRef.current) return;
       const ctx = ctxRef.current;
-      if (!ctx || ctx.state === "closed") {
-        isRunningRef.current = false;
-        streamRef.current?.getTracks().forEach(t => t.stop());
-        streamRef.current = null;
-        ctxRef.current = null;
-        analyserRef.current = null;
-        bufRef.current = null;
-        specRef.current = null;
-        recentKeys.current = [];
-        recentCents.current = [];
-        setCurrentPitch(null);
-        try { await startListening(); } catch { /* ignore */ }
-      } else if (ctx.state === "suspended") {
+      if (ctx.state === "suspended") {
         try { await ctx.resume(); } catch { /* ignore */ }
       }
     };
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
-  }, [startListening]);
+  }, []);
 
-  useEffect(() => () => { stopListening(); }, [stopListening]);
+  // 언마운트 정리
+  useEffect(() => {
+    return () => {
+      stopLoop();
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      ctxRef.current?.close();
+    };
+  }, [stopLoop]);
 
   return {
-    isListening, currentPitch, startListening, stopListening, error, isRecovering,
+    isListening,
+    currentPitch,
+    startListening,
+    stopListening,
+    error,
+    isRecovering: false,
     stream: streamRef.current,
     audioContext: ctxRef.current,
     analyserRef,
