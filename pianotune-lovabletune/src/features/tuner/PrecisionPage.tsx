@@ -141,10 +141,20 @@ export default function PrecisionPage() {
   const { isListening, currentPitch, startListening, stopListening, error, analyserRef: pitchAnalyserRef } =
     usePitchDetector(handlePitch);
 
-  const { strobeCents } = useStrobeDetector(
+  const { strobeCents, startListening: strobeStart, stopListening: strobeStop } = useStrobeDetector(
     pendingKeyIndex,
     pitchAnalyserRef  // analyser 공유 (마이크 이중 열기 방지)
   );
+
+  // pitchDetector 마이크 on/off 따라 스트로브 루프도 동기화
+  useEffect(() => {
+    if (isListening) {
+      const t = setTimeout(() => { strobeStart(); }, 100);
+      return () => clearTimeout(t);
+    } else {
+      strobeStop();
+    }
+  }, [isListening, strobeStart, strobeStop]);
 
   // 스트로브 확정값 추가 - 새 값이 들어올 때마다 저장
   const prevStrobeRef = useRef<number | null>(null);

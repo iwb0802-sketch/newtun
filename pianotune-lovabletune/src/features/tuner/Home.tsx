@@ -141,10 +141,22 @@ export default function Home() {
   useWakeLock(isListening);
 
   // 스트로브 — usePitchDetector analyser 공유 (마이크 이중 열기 방지)
-  const { strobeCents: stableCents, isCapturing, captureProgress, currentNote: strobeNote, currentKeyIndex: strobeKeyIndex, analysisFreq: strobeAnalysisFreq, partial: strobePartial } = useStrobeDetector(
+  const { strobeCents: stableCents, isCapturing, captureProgress, currentNote: strobeNote, currentKeyIndex: strobeKeyIndex, analysisFreq: strobeAnalysisFreq, partial: strobePartial,
+    startListening: strobeStart, stopListening: strobeStop } = useStrobeDetector(
     currentPitch?.keyIndex ?? null,
     pitchAnalyserRef  // analyser 공유
   );
+
+  // pitchDetector 마이크 on/off 따라 스트로브 루프도 동기화
+  useEffect(() => {
+    if (isListening) {
+      // analyser가 준비될 때까지 약간 대기
+      const t = setTimeout(() => { strobeStart(); }, 100);
+      return () => clearTimeout(t);
+    } else {
+      strobeStop();
+    }
+  }, [isListening, strobeStart, strobeStop]);
 
   // 스트로브 1회 자동저장 - 안정값 감지 시 자동으로 파란 점에 기록
   const lastAutoStrobeKeyRef = useRef<number | null>(null);
