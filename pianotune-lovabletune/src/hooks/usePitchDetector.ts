@@ -73,8 +73,8 @@ export function usePitchDetector(
 
   const recentKeys = useRef<number[]>([]);
   const recentCents = useRef<number[]>([]);
-  const WINDOW = 15;
-  const MIN_MATCH = 8;
+  const WINDOW = 10;
+  const MIN_MATCH = 5;
 
   const stopListening = useCallback(() => {
     isRunningRef.current = false;
@@ -96,21 +96,14 @@ export function usePitchDetector(
       setError(null);
       setIsRecovering(false);
 
-      let stream: MediaStream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: false, autoGainControl: false, noiseSuppression: false, sampleRate: 44100 },
-        });
-      } catch {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: false, autoGainControl: false, noiseSuppression: false },
-        });
-      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, autoGainControl: false, noiseSuppression: false },
+      });
       streamRef.current = stream;
 
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 44100 });
+      const ctx = new AudioContext();
       ctxRef.current = ctx;
-      if (ctx.state === "suspended") { try { await ctx.resume(); } catch { /* ignore */ } }
+      if (ctx.state === "suspended") { await ctx.resume(); }
 
       const analyser = ctx.createAnalyser();
       analyser.fftSize = fftSize;
@@ -133,12 +126,10 @@ export function usePitchDetector(
         const spec = specRef.current;
         if (!ctx || !analyser || !buf || !spec) return;
 
-        if (ctx.state === "suspended") { ctx.resume().catch(() => {}); }
-
         analyser.getFloatTimeDomainData(buf as Float32Array<ArrayBuffer>);
         const rms = getRMS(buf);
 
-        if (rms < 0.003) {
+        if (rms < 0.001) {
           recentKeys.current = [];
           recentCents.current = [];
           setCurrentPitch(null);
