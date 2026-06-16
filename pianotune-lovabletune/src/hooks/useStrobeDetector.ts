@@ -1,75 +1,73 @@
 /**
- * useStrobeDetector.ts (v3)
- * 자동피치(usePitchDetector)와 동일한 알고리즘 사용 — YIN + HPS 옥타브 보정.
- * 결과를 스트로브 UI용으로 가공할 뿐, 인식 방식은 자동피치와 완전히 동일.
+ * useStrobeDetector.ts (v4 — 단순 재작성)
  *
- * 흐름:
- * 1. referenceKeyIndex(타겟 건반)가 정해지면 그 건반 주변만 cents 측정
- * 2. RMS 피크 후 안정 구간 동안 cents 중앙값 → strobeCents 출력
+ * - 자체 마이크/AudioContext 직접 열기 (usePitchDetector 의존 없음)
+ * - 매 프레임 YIN → 타겟 건반 기준 cents 계산 → liveCents 즉시 출력
+ * - 300ms 슬라이딩 윈도우 중앙값 → strobeCents (확정값)
+ * - referenceKeyIndex 바뀌면 즉시 전체 리셋
  */
 
-import { useEffect, useRef, useState } from "react";
-import { PIANO_KEYS, freqToCentOffset } from "./usePitchDetector";
-import {
-  applyHannWindow, detectPitchYIN, correctOctaveByHPS,
-  getRMS, median,
-} from "@/lib/tuner/pitchEngine";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { PIANO_KEYS } from "./usePitchDetector";
+import { detectPitchYIN, getRMS, median } from "@/lib/tuner/pitchEngine";
 
 export interface StrobeState {
-  strobeCents: number | null;      // 500ms 수집 후 확정값
-  liveCents: number | null;        // 매 프레임 실시간 값 (스트로브 애니메이션용)
+  liveCents: number | null;        // 매 프레임 실시간 (스트로브 움직임용)
+  strobeCents: number | null;      // 300ms 중앙값 확정값 (pendingCents용)
   isCapturing: boolean;
   captureProgress: number;
   currentNote: string | null;
   currentKeyIndex: number | null;
   analysisFreq: number | null;
   partial: number | null;
+  isListening: boolean;
+  startListening: () => Promise<void>;
+  stopListening: () => void;
+  micError: string | null;
 }
 
+const WINDOW_MS = 300;   // 슬라이딩 윈도우
+const MIN_RMS   = 0.005; // 무음 임계값
+
 export function useStrobeDetector(
-  stream: MediaStream | null,
-  audioContext: AudioContext | null,
-  stableDurationMs: number = 800,
-  fftSize: 4096 | 8192 = 4096,
   referenceKeyIndex: number | null = null
 ): StrobeState {
-  const [strobeCents, setStrobeCents] = useState<number | null>(null);
-  const [liveCents, setLiveCents] = useState<number | null>(null);
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [captureProgress, setCaptureProgress] = useState(0);
-  const [currentNote, setCurrentNote] = useState<string | null>(null);
-  const [currentKeyIndex, setCurrentKeyIndex] = useState<number | null>(null);
-  const [analysisFreq, setAnalysisFreq] = useState<number | null>(null);
+  const [liveCents,      setLiveCents]      = useState<number | null>(null);
+  const [strobeCents,    setStrobeCents]    = useState<number | null>(null);
+  const [isCapturing,    setIsCapturing]    = useState(false);
+  const [captureProgress,setCaptureProgress]= useState(0);
+  const [currentNote,    setCurrentNote]    = useState<string | null>(null);
+  const [currentKeyIndex,setCurrentKeyIndex]= useState<number | null>(null);
+  const [analysisFreq,   setAnalysisFreq]   = useState<number | null>(null);
+  const [isListening,    setIsListening]    = useState(false);
+  const [micError,       setMicError]       = useState<string | null>(null);
 
+  // 오디오 인프라
+  const ctxRef      = useRef<AudioContext | null>(null);
+  const streamRef   = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const bufRef = useRef<Float32Array | null>(null);
-  const specRef = useRef<Float32Array | null>(null);
+  const rafRef      = useRef<number | null>(null);
+  const bufRef      = useRef<Float32Array | null>(null);
 
-  const lastKeyRef = useRef<number | null>(null);
-  const peakRmsRef = useRef(0);
-  const captureStartRef = useRef<number | null>(null);
-  const captureBufferRef = useRef<number[]>([]);
+  // 측정 버퍼 (타임스탬프 포함)
+  const windowRef   = useRef<Array<{ t: number; c: number }>>([]);
 
-  const refKeyRef = useRef<number | null>(referenceKeyIndex);
+  // referenceKeyIndex ref — detect 루프가 클로저로 최신값 읽음
+  const refKeyRef   = useRef<number | null>(referenceKeyIndex);
 
-  // referenceKeyIndex 변경 시 즉시 전체 리셋 — detect 루프 다음 프레임까지 기다리지 않음
+  // referenceKeyIndex 바뀌면 즉시 리셋
   useEffect(() => {
     refKeyRef.current = referenceKeyIndex;
-    // 모든 캡처 상태 즉시 초기화
-    peakRmsRef.current = 0;
-    captureBufferRef.current = [];
-    captureStartRef.current = null;
-    lastKeyRef.current = referenceKeyIndex;
-    setStrobeCents(null);
+    windowRef.current = [];
     setLiveCents(null);
+    setStrobeCents(null);
     setIsCapturing(false);
     setCaptureProgress(0);
     if (referenceKeyIndex !== null) {
-      setCurrentNote(`${PIANO_KEYS[referenceKeyIndex].noteName}${PIANO_KEYS[referenceKeyIndex].octave}`);
+      const k = PIANO_KEYS[referenceKeyIndex];
+      setCurrentNote(`${k.noteName}${k.octave}`);
       setCurrentKeyIndex(referenceKeyIndex);
-      setAnalysisFreq(PIANO_KEYS[referenceKeyIndex].freq);
+      setAnalysisFreq(k.freq);
     } else {
       setCurrentNote(null);
       setCurrentKeyIndex(null);
@@ -77,40 +75,21 @@ export function useStrobeDetector(
     }
   }, [referenceKeyIndex]);
 
-  const MIN_SAMPLES = 6;
-
-  useEffect(() => {
-    if (!stream || !audioContext) {
-      if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-      try { sourceRef.current?.disconnect(); } catch { /* ignore */ }
-      analyserRef.current = null;
-      bufRef.current = null;
-      specRef.current = null;
-      return;
-    }
-
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = fftSize;
-    analyser.smoothingTimeConstant = 0;
-    analyserRef.current = analyser;
-
-    const source = audioContext.createMediaStreamSource(stream);
-    source.connect(analyser);
-    sourceRef.current = source;
-
-    bufRef.current = new Float32Array(analyser.fftSize);
-    specRef.current = new Float32Array(analyser.frequencyBinCount);
+  // ── 감지 루프 ────────────────────────────────────────────────────
+  const startLoop = useCallback(() => {
+    if (!analyserRef.current || !bufRef.current) return;
 
     const detect = () => {
-      const an = analyserRef.current;
+      const an  = analyserRef.current;
       const buf = bufRef.current;
-      const spec = specRef.current;
-      if (!an || !buf || !spec) { rafRef.current = requestAnimationFrame(detect); return; }
+      if (!an || !buf) return;
 
-      an.getFloatTimeDomainData(buf as Float32Array<ArrayBuffer>);
+      an.getFloatTimeDomainData(buf);
       const rms = getRMS(buf);
 
-      if (rms < 0.003) {
+      if (rms < MIN_RMS) {
+        // 무음 — liveCents 지우고 계속 대기
+        setLiveCents(null);
         rafRef.current = requestAnimationFrame(detect);
         return;
       }
@@ -121,85 +100,131 @@ export function useStrobeDetector(
         return;
       }
 
-      setCurrentNote(`${PIANO_KEYS[refKey].noteName}${PIANO_KEYS[refKey].octave}`);
-      setCurrentKeyIndex(refKey);
+      const sampleRate = ctxRef.current!.sampleRate;
 
-      // 최소 RMS 임계값 — 너무 약한 소리는 무시
-      if (rms < 0.008) {
-        rafRef.current = requestAnimationFrame(detect);
-        return;
-      }
-
-      // === YIN + HPS ===
-      const winBuf = applyHannWindow(buf);
-      const fYin = detectPitchYIN(winBuf, audioContext.sampleRate, 26, 5000, 0.15);
-      if (fYin <= 0) {
-        rafRef.current = requestAnimationFrame(detect);
-        return;
-      }
-      an.getFloatFrequencyData(spec as Float32Array<ArrayBuffer>);
-      const fCorrected = correctOctaveByHPS(fYin, spec, audioContext.sampleRate, an.fftSize, 5);
-
-      // 타겟 건반 기준 cent 편차
+      // ── YIN 피치 감지 ─────────────────────────────────────────
       const targetFreq = PIANO_KEYS[refKey].freq;
-      const rawCent = 1200 * Math.log2(fCorrected / targetFreq);
+      // 타겟 건반 ±1옥타브 범위로만 YIN 탐색
+      const fMin = targetFreq / 2.5;
+      const fMax = targetFreq * 2.5;
+      const fRaw = detectPitchYIN(buf, sampleRate, Math.max(20, fMin), Math.min(8000, fMax), 0.15);
 
-      // 옥타브 정규화 — 가장 가까운 옥타브로 맞춤 (-600 ~ +600¢ → -50 ~ +50¢ 범위)
-      const octaveShift = Math.round(rawCent / 1200);
-      const cent = rawCent - octaveShift * 1200;
-
-      // ±60¢ 이상 벗어나면 다른 건반 — 무시
-      if (Math.abs(cent) > 60) {
+      if (fRaw <= 0) {
         rafRef.current = requestAnimationFrame(detect);
         return;
       }
 
-      // 매 프레임 실시간 값 → 스트로브 애니메이션용
+      // 타겟 건반 기준 cents 계산
+      const rawCent = 1200 * Math.log2(fRaw / targetFreq);
+
+      // 옥타브 정규화 → 가장 가까운 옥타브 기준 -50~+50¢
+      const octShift = Math.round(rawCent / 1200);
+      const cent = rawCent - octShift * 1200;
+
+      // ±55¢ 초과 → 완전히 다른 음, 무시
+      if (Math.abs(cent) > 55) {
+        rafRef.current = requestAnimationFrame(detect);
+        return;
+      }
+
+      // 매 프레임 실시간 출력
       setLiveCents(Math.round(cent * 10) / 10);
 
-      if (captureStartRef.current === null) {
-        captureStartRef.current = Date.now();
-        setIsCapturing(true);
-      }
-      captureBufferRef.current.push(cent);
+      // 슬라이딩 윈도우에 추가
+      const now = Date.now();
+      windowRef.current.push({ t: now, c: cent });
+      // 오래된 샘플 제거
+      windowRef.current = windowRef.current.filter(s => now - s.t <= WINDOW_MS);
 
-      const elapsed = Date.now() - captureStartRef.current;
-      setCaptureProgress(Math.min(elapsed / stableDurationMs, 1));
+      const samples = windowRef.current;
+      const elapsed = samples.length > 1 ? now - samples[0].t : 0;
+      const progress = Math.min(elapsed / WINDOW_MS, 1);
+      setCaptureProgress(progress);
 
-      if (elapsed >= stableDurationMs && captureBufferRef.current.length >= MIN_SAMPLES) {
-        const medRaw = median(captureBufferRef.current);
-        if (isFinite(medRaw)) {
-          const med = Math.round(medRaw * 10) / 10;
-          setStrobeCents(med);
-        }
+      if (progress >= 1 && samples.length >= 4) {
         setIsCapturing(false);
-        setCaptureProgress(0);
-        // 버퍼만 리셋 — 계속 새로 수집 (실시간 갱신)
-        captureBufferRef.current = [];
-        captureStartRef.current = null;
+        const med = Math.round(median(samples.map(s => s.c)) * 10) / 10;
+        if (isFinite(med)) setStrobeCents(med);
+      } else {
+        setIsCapturing(true);
       }
 
       rafRef.current = requestAnimationFrame(detect);
     };
 
     rafRef.current = requestAnimationFrame(detect);
+  }, []);
 
+  const stopLoop = useCallback(() => {
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+  }, []);
+
+  // ── 마이크 시작/종료 ─────────────────────────────────────────────
+  const startListening = useCallback(async () => {
+    try {
+      setMicError(null);
+
+      // 이미 열려 있으면 재사용
+      if (ctxRef.current && streamRef.current) {
+        startLoop();
+        setIsListening(true);
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      });
+      streamRef.current = stream;
+
+      const ctx = new AudioContext({ sampleRate: 48000 });
+      ctxRef.current = ctx;
+
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 4096;
+      analyser.smoothingTimeConstant = 0;
+      analyserRef.current = analyser;
+      bufRef.current = new Float32Array(analyser.fftSize);
+
+      const src = ctx.createMediaStreamSource(stream);
+      src.connect(analyser);
+
+      setIsListening(true);
+      startLoop();
+    } catch (e: unknown) {
+      setMicError(e instanceof Error ? e.message : "마이크 오류");
+    }
+  }, [startLoop]);
+
+  const stopListening = useCallback(() => {
+    stopLoop();
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    ctxRef.current?.close();
+    ctxRef.current = null;
+    analyserRef.current = null;
+    bufRef.current = null;
+    windowRef.current = [];
+    setIsListening(false);
+    setLiveCents(null);
+    setStrobeCents(null);
+    setIsCapturing(false);
+    setCaptureProgress(0);
+  }, [stopLoop]);
+
+  // 언마운트 시 정리
+  useEffect(() => {
     return () => {
-      if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-      try { source.disconnect(); } catch { /* ignore */ }
-      analyserRef.current = null;
-      bufRef.current = null;
-      specRef.current = null;
-      peakRmsRef.current = 0;
-      captureStartRef.current = null;
-      captureBufferRef.current = [];
-      setLiveCents(null);
+      stopLoop();
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      ctxRef.current?.close();
     };
-  }, [stream, audioContext, stableDurationMs, fftSize]);
+  }, [stopLoop]);
 
   return {
-    strobeCents, liveCents, isCapturing, captureProgress,
+    liveCents, strobeCents,
+    isCapturing, captureProgress,
     currentNote, currentKeyIndex, analysisFreq,
     partial: 1,
+    isListening, startListening, stopListening, micError,
   };
 }

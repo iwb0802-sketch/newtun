@@ -1,18 +1,12 @@
 /**
- * StrobeManualPage.tsx — 수동 스트로브 조율 모드
- *
- * 흐름:
- * 1. 건반 선택 (SectionTabs + TargetNoteBar)
- * 2. 마이크 켜기 → useStrobeDetector가 선택 건반 기준으로 실시간 추적
- * 3. 스트로브 바 + cents 값으로 음 잔량에 따라 계속 변화
- * 4. 안정값 확인 후 "확정" 버튼 눌러서 그래프에 저장
+ * StrobeManualPage.tsx — 수동 스트로브 조율 모드 (v2)
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { toast as sonnerToast } from "sonner";
 import { cn } from "@/lib/utils";
-import { usePitchDetector, PIANO_KEYS } from "@/hooks/usePitchDetector";
+import { PIANO_KEYS } from "@/hooks/usePitchDetector";
 import { useStrobeDetector } from "@/hooks/useStrobeDetector";
 import { useTuningSession } from "@/hooks/useTuningSession";
 import { useWakeLock } from "@/hooks/useWakeLock";
@@ -48,50 +42,41 @@ export default function StrobeManualPage() {
   const activeSessionIdRef = useRef(activeSessionId);
   useEffect(() => { activeSessionIdRef.current = activeSessionId; }, [activeSessionId]);
 
-  // 마이크 — usePitchDetector에서 stream/audioContext 공유
-  const { isListening, startListening, stopListening, error, stream, audioContext } =
-    usePitchDetector(undefined);
-
-  useWakeLock(isListening);
-
-  // 스트로브 — 선택 건반 기준으로 실시간 추적
+  // ── 스트로브 (마이크 자체 관리) ──────────────────────────────────
   const {
-    strobeCents,
     liveCents,
+    strobeCents,
     isCapturing,
     captureProgress,
     currentNote,
     currentKeyIndex: strobeKeyIndex,
     analysisFreq,
     partial,
-  } = useStrobeDetector(
-    isListening ? stream : null,
-    isListening ? audioContext : null,
-    500,
-    4096,
-    seq.targetKeyIndex
-  );
+    isListening,
+    startListening,
+    stopListening,
+    micError,
+  } = useStrobeDetector(seq.targetKeyIndex);
 
-  // 확정 대기 cents (스트로브 값이 업데이트될 때마다 갱신, null이면 아직 측정 안 됨)
+  useWakeLock(isListening);
+
+  // ── pendingCents: strobeCents가 올 때마다 갱신 ───────────────────
   const [pendingCents, setPendingCents] = useState<number | null>(null);
 
-  // strobeCents가 바뀔 때마다 pendingCents 업데이트 (NaN/Infinity 방어)
   useEffect(() => {
     if (strobeCents !== null && isFinite(strobeCents)) {
       setPendingCents(strobeCents);
     }
   }, [strobeCents]);
 
-  // 리셋 — 현재 pendingCents 초기화 (같은 건반 재측정)
-  const handleReset = useCallback(() => {
-    setPendingCents(null);
-  }, []);
-
   // 건반 바뀌면 pendingCents 리셋
   useEffect(() => {
     setPendingCents(null);
   }, [seq.targetKeyIndex]);
 
+  const handleReset = useCallback(() => setPendingCents(null), []);
+
+  // ── 세션 ─────────────────────────────────────────────────────────
   const [showSessionList, setShowSessionList] = useState(false);
   const [userName, setUserName] = useState("");
 
@@ -102,7 +87,7 @@ export default function StrobeManualPage() {
     return null;
   }, [createSession]);
 
-  // 확정 버튼
+  // ── 확정 ─────────────────────────────────────────────────────────
   const handleConfirm = useCallback(async () => {
     if (pendingCents === null) return;
     await ensureSession();
@@ -113,13 +98,14 @@ export default function StrobeManualPage() {
       { duration: 1800 }
     );
     setPendingCents(null);
-    // 다음 건반으로 자동 이동
     seq.next();
   }, [pendingCents, seq, ensureSession, recordMeasurement]);
 
+  // ── 마이크 토글 ───────────────────────────────────────────────────
   const toggleListening = async () => {
-    if (isListening) stopListening();
-    else {
+    if (isListening) {
+      stopListening();
+    } else {
       if (!activeSessionIdRef.current) {
         const s = await createSession();
         if (s) activeSessionIdRef.current = s.id;
@@ -127,10 +113,6 @@ export default function StrobeManualPage() {
       await startListening();
     }
   };
-
-  const isMeasured = activeSession
-    ? seq.targetKeyIndex in (activeSession.measurements as Record<number, unknown>)
-    : false;
 
   const targetKey = PIANO_KEYS[seq.targetKeyIndex];
 
@@ -185,7 +167,7 @@ export default function StrobeManualPage() {
         {/* ── 스트로브 메인 패널 ── */}
         <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
 
-          {/* cents 수치 — 스트로브 위 */}
+          {/* cents 수치 */}
           <div className="px-5 pt-4 pb-2 flex items-end justify-between">
             <div>
               <span
@@ -194,6 +176,8 @@ export default function StrobeManualPage() {
               >
                 {pendingCents !== null
                   ? `${pendingCents > 0 ? "+" : ""}${pendingCents.toFixed(1)}`
+                  : liveCents !== null
+                  ? `${liveCents > 0 ? "+" : ""}${liveCents.toFixed(1)}`
                   : "—"}
               </span>
               <span className="text-lg text-muted-foreground ml-1">¢</span>
@@ -206,9 +190,14 @@ export default function StrobeManualPage() {
                   ? "bg-warn/15 text-warn"
                   : strobeCents !== null
                   ? absC !== null && absC <= 2 ? "bg-in-tune/15 text-in-tune" : "bg-primary/10 text-primary"
+                  : liveCents !== null
+                  ? "bg-warn/15 text-warn"
                   : "bg-muted text-muted-foreground"
               )}>
-                {isCapturing ? "● 수집 중" : strobeCents !== null ? "● 안정값" : "대기 중"}
+                {isCapturing ? "● 수집 중"
+                  : strobeCents !== null ? "● 안정값"
+                  : liveCents !== null ? "● 감지 중"
+                  : "대기 중"}
               </span>
               <span className="text-[10px] text-muted-foreground" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                 {targetKey.noteName}{targetKey.octave} · 건반 {targetKey.keyNumber}
@@ -296,9 +285,9 @@ export default function StrobeManualPage() {
           <p className="text-xs text-center text-muted-foreground">Pro 등급으로 변경하면 마이크를 사용할 수 있습니다.</p>
         )}
 
-        {error && (
+        {micError && (
           <div className="px-3 py-2 rounded-lg bg-off/10 border border-off/40 text-xs text-off">
-            {error}
+            {micError}
           </div>
         )}
 
