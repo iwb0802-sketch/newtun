@@ -51,11 +51,25 @@ export function useStrobeDetector(
   const captureBufferRef = useRef<number[]>([]);
 
   const refKeyRef = useRef<number | null>(referenceKeyIndex);
+
+  // referenceKeyIndex 변경 시 즉시 전체 리셋 — detect 루프 다음 프레임까지 기다리지 않음
   useEffect(() => {
     refKeyRef.current = referenceKeyIndex;
+    // 모든 캡처 상태 즉시 초기화
+    peakRmsRef.current = 0;
+    captureBufferRef.current = [];
+    captureStartRef.current = null;
+    lastKeyRef.current = referenceKeyIndex;
+    setStrobeCents(null);
+    setIsCapturing(false);
+    setCaptureProgress(0);
     if (referenceKeyIndex !== null) {
+      setCurrentNote(`${PIANO_KEYS[referenceKeyIndex].noteName}${PIANO_KEYS[referenceKeyIndex].octave}`);
+      setCurrentKeyIndex(referenceKeyIndex);
       setAnalysisFreq(PIANO_KEYS[referenceKeyIndex].freq);
     } else {
+      setCurrentNote(null);
+      setCurrentKeyIndex(null);
       setAnalysisFreq(null);
     }
   }, [referenceKeyIndex]);
