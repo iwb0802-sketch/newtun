@@ -124,7 +124,7 @@ export function useStrobeDetector(
       // 타겟 건반 ±1옥타브 범위로만 YIN 탐색
       const fMin = targetFreq / 2.5;
       const fMax = targetFreq * 2.5;
-      const fRaw = detectPitchYIN(activeBuf, sampleRate, Math.max(20, fMin), Math.min(8000, fMax), 0.15);
+      const fRaw = detectPitchYIN(activeBuf, sampleRate, { fMin: Math.max(20, fMin), fMax: Math.min(8000, fMax), threshold: 0.15 });
 
       if (fRaw <= 0) {
         rafRef.current = requestAnimationFrame(detect);

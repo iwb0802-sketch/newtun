@@ -112,7 +112,7 @@ export function usePitchDetector(
       const sampleRate = analyser.context?.sampleRate ?? 48000;
 
       // 전 건반 범위 YIN (A0=27Hz ~ C8=4186Hz)
-      const fRaw = detectPitchYIN(activeBuf, sampleRate, 27, 5000, 0.15);
+      const fRaw = detectPitchYIN(activeBuf, sampleRate, { fMin: 27, fMax: 5000, threshold: 0.15 });
 
       if (fRaw > 0) {
         const r = freqToCentOffset(fRaw);
