@@ -51,6 +51,7 @@ export interface UsePitchDetectorReturn {
   isRecovering: boolean;
   stream: MediaStream | null;
   audioContext: AudioContext | null;
+  analyserRef: { readonly current: AnalyserNode | null };
 }
 
 export function usePitchDetector(
@@ -266,5 +267,6 @@ export function usePitchDetector(
     isListening, currentPitch, startListening, stopListening, error, isRecovering,
     stream: streamRef.current,
     audioContext: ctxRef.current,
+    analyserRef,
   };
 }

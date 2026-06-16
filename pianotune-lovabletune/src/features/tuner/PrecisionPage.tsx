@@ -138,11 +138,12 @@ export default function PrecisionPage() {
     }, 500);
   }, [onPitchActive, onSilenceDetected]);
 
-  const { isListening, currentPitch, startListening, stopListening, error } =
+  const { isListening, currentPitch, startListening, stopListening, error, analyserRef: pitchAnalyserRef } =
     usePitchDetector(handlePitch);
 
   const { strobeCents } = useStrobeDetector(
-    pendingKeyIndex  // v4: keyIndex만 넘김, 자체 마이크 사용
+    pendingKeyIndex,
+    pitchAnalyserRef  // analyser 공유 (마이크 이중 열기 방지)
   );
 
   // 스트로브 확정값 추가 - 새 값이 들어올 때마다 저장

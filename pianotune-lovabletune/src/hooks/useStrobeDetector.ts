@@ -30,7 +30,8 @@ const WINDOW_MS = 300;   // 슬라이딩 윈도우
 const MIN_RMS   = 0.005; // 무음 임계값
 
 export function useStrobeDetector(
-  referenceKeyIndex: number | null = null
+  referenceKeyIndex: number | null = null,
+  externalAnalyserRef?: { readonly current: AnalyserNode | null }
 ): StrobeState {
   const [liveCents,      setLiveCents]      = useState<number | null>(null);
   const [strobeCents,    setStrobeCents]    = useState<number | null>(null);
@@ -77,15 +78,30 @@ export function useStrobeDetector(
 
   // ── 감지 루프 ────────────────────────────────────────────────────
   const startLoop = useCallback(() => {
-    if (!analyserRef.current || !bufRef.current) return;
+    // external analyser가 있으면 그걸 사용, 없으면 자체 analyserRef 사용
+    const effectiveAnalyser = externalAnalyserRef?.current ?? analyserRef.current;
+    if (!effectiveAnalyser) return;
+
+    // external 모드면 buf를 analyser fftSize에 맞게 초기화
+    if (externalAnalyserRef?.current && !bufRef.current) {
+      bufRef.current = new Float32Array(externalAnalyserRef.current.fftSize);
+    }
+    if (!bufRef.current) return;
 
     const detect = () => {
-      const an  = analyserRef.current;
+      // 매 프레임마다 external ref 최신값으로 읽기
+      const an  = externalAnalyserRef?.current ?? analyserRef.current;
       const buf = bufRef.current;
       if (!an || !buf) return;
 
-      an.getFloatTimeDomainData(buf);
-      const rms = getRMS(buf);
+      // buf 크기 불일치 시 재할당
+      if (buf.length !== an.fftSize) {
+        bufRef.current = new Float32Array(an.fftSize);
+      }
+
+      const activeBuf = bufRef.current!;
+      an.getFloatTimeDomainData(activeBuf);
+      const rms = getRMS(activeBuf);
 
       if (rms < MIN_RMS) {
         // 무음 — liveCents 지우고 계속 대기
@@ -100,14 +116,15 @@ export function useStrobeDetector(
         return;
       }
 
-      const sampleRate = ctxRef.current!.sampleRate;
+      // sampleRate: external ctx 있으면 an.context, 없으면 자체 ctxRef
+      const sampleRate = an.context?.sampleRate ?? ctxRef.current?.sampleRate ?? 48000;
 
       // ── YIN 피치 감지 ─────────────────────────────────────────
       const targetFreq = PIANO_KEYS[refKey].freq;
       // 타겟 건반 ±1옥타브 범위로만 YIN 탐색
       const fMin = targetFreq / 2.5;
       const fMax = targetFreq * 2.5;
-      const fRaw = detectPitchYIN(buf, sampleRate, Math.max(20, fMin), Math.min(8000, fMax), 0.15);
+      const fRaw = detectPitchYIN(activeBuf, sampleRate, Math.max(20, fMin), Math.min(8000, fMax), 0.15);
 
       if (fRaw <= 0) {
         rafRef.current = requestAnimationFrame(detect);
@@ -164,6 +181,13 @@ export function useStrobeDetector(
     try {
       setMicError(null);
 
+      // external analyser 모드: 마이크 안 열고 바로 루프 시작
+      if (externalAnalyserRef) {
+        startLoop();
+        setIsListening(true);
+        return;
+      }
+
       // 이미 열려 있으면 재사용
       if (ctxRef.current && streamRef.current) {
         startLoop();
@@ -197,11 +221,14 @@ export function useStrobeDetector(
 
   const stopListening = useCallback(() => {
     stopLoop();
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    streamRef.current = null;
-    ctxRef.current?.close();
-    ctxRef.current = null;
-    analyserRef.current = null;
+    // external 모드면 마이크/ctx는 닫지 않음 (usePitchDetector 소유)
+    if (!externalAnalyserRef) {
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+      ctxRef.current?.close();
+      ctxRef.current = null;
+      analyserRef.current = null;
+    }
     bufRef.current = null;
     windowRef.current = [];
     setIsListening(false);
@@ -209,16 +236,19 @@ export function useStrobeDetector(
     setStrobeCents(null);
     setIsCapturing(false);
     setCaptureProgress(0);
-  }, [stopLoop]);
+  }, [stopLoop, externalAnalyserRef]);
 
   // 언마운트 시 정리
   useEffect(() => {
     return () => {
       stopLoop();
-      streamRef.current?.getTracks().forEach(t => t.stop());
-      ctxRef.current?.close();
+      // external 모드면 마이크/ctx 정리하지 않음
+      if (!externalAnalyserRef) {
+        streamRef.current?.getTracks().forEach(t => t.stop());
+        ctxRef.current?.close();
+      }
     };
-  }, [stopLoop]);
+  }, [stopLoop, externalAnalyserRef]);
 
   return {
     liveCents, strobeCents,
