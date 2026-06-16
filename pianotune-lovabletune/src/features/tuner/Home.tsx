@@ -134,7 +134,7 @@ export default function Home() {
     }
   }, [recordMeasurement]);
 
-  const { isListening, currentPitch, startListening, stopListening, error, isRecovering, stream, audioContext } =
+  const { isListening, currentPitch, startListening, stopListening, error, isRecovering } =
     usePitchDetector(handlePitchDetected, fftSize);
 
   // 화면 꺼짐 방지 - 마이크 켜지면 자동 활성화
@@ -142,11 +142,7 @@ export default function Home() {
 
   // 스트로브 독립 감지 (자동 센트와 완전 분리)
   const { strobeCents: stableCents, isCapturing, captureProgress, currentNote: strobeNote, currentKeyIndex: strobeKeyIndex, analysisFreq: strobeAnalysisFreq, partial: strobePartial } = useStrobeDetector(
-    isListening ? stream : null,
-    isListening ? audioContext : null,
-    stableDuration,
-    fftSize,
-    currentPitch?.keyIndex ?? null  // 자동 피치 기준 건반으로 옵타브 보정
+    currentPitch?.keyIndex ?? null  // v4: keyIndex만 넘김, 자체 마이크 사용
   );
 
   // 스트로브 1회 자동저장 - 안정값 감지 시 자동으로 파란 점에 기록
