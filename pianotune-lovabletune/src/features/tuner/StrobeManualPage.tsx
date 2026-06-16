@@ -66,7 +66,7 @@ export default function StrobeManualPage() {
   } = useStrobeDetector(
     isListening ? stream : null,
     isListening ? audioContext : null,
-    800,
+    500,
     4096,
     seq.targetKeyIndex
   );
@@ -74,12 +74,17 @@ export default function StrobeManualPage() {
   // 확정 대기 cents (스트로브 값이 업데이트될 때마다 갱신, null이면 아직 측정 안 됨)
   const [pendingCents, setPendingCents] = useState<number | null>(null);
 
-  // strobeCents가 바뀔 때마다 pendingCents 업데이트 (실시간으로 계속 갱신)
+  // strobeCents가 바뀔 때마다 pendingCents 업데이트 (NaN/Infinity 방어)
   useEffect(() => {
-    if (strobeCents !== null) {
+    if (strobeCents !== null && isFinite(strobeCents)) {
       setPendingCents(strobeCents);
     }
   }, [strobeCents]);
+
+  // 리셋 — 현재 pendingCents 초기화 (같은 건반 재측정)
+  const handleReset = useCallback(() => {
+    setPendingCents(null);
+  }, []);
 
   // 건반 바뀌면 pendingCents 리셋
   useEffect(() => {
@@ -236,13 +241,13 @@ export default function StrobeManualPage() {
             />
           </div>
 
-          {/* 확정 버튼 — 스트로브 바 바로 아래 */}
-          <div className="px-4 py-3 border-t border-border/60">
+          {/* 확정 / 리셋 버튼 */}
+          <div className="px-4 py-3 border-t border-border/60 flex gap-2">
             <button
               onClick={handleConfirm}
               disabled={pendingCents === null}
               className={cn(
-                "w-full py-3 rounded-xl font-bold text-sm transition-all active:scale-[0.98]",
+                "flex-1 py-3 rounded-xl font-bold text-sm transition-all active:scale-[0.98]",
                 pendingCents !== null
                   ? "bg-in-tune text-white hover:bg-in-tune/90 shadow-sm"
                   : "bg-muted text-muted-foreground/50 cursor-not-allowed"
@@ -250,7 +255,19 @@ export default function StrobeManualPage() {
             >
               {pendingCents !== null
                 ? `✓ 확정  ${pendingCents > 0 ? "+" : ""}${pendingCents.toFixed(1)}¢`
-                : "건반을 눌러 스트로브 측정 후 확정"}
+                : "측정 후 확정"}
+            </button>
+            <button
+              onClick={handleReset}
+              disabled={pendingCents === null}
+              className={cn(
+                "px-4 py-3 rounded-xl font-bold text-sm transition-all active:scale-[0.98]",
+                pendingCents !== null
+                  ? "bg-muted hover:bg-muted/70 text-foreground border border-border"
+                  : "bg-muted text-muted-foreground/30 cursor-not-allowed border border-border/40"
+              )}
+            >
+              ↺ 리셋
             </button>
           </div>
         </div>

@@ -74,8 +74,7 @@ export function useStrobeDetector(
     }
   }, [referenceKeyIndex]);
 
-  const PEAK_RATIO = 0.55;
-  const MIN_SAMPLES = 8;
+  const MIN_SAMPLES = 6;
 
   useEffect(() => {
     if (!stream || !audioContext) {
@@ -113,36 +112,17 @@ export function useStrobeDetector(
         return;
       }
 
-      // 새 건반 감지 (RMS 급상승)
-      if (rms > peakRmsRef.current * 1.5 && rms > 0.02) {
-        peakRmsRef.current = rms;
-        captureStartRef.current = null;
-        captureBufferRef.current = [];
-        setIsCapturing(false);
-        setCaptureProgress(0);
-        setStrobeCents(null);
-      } else if (rms > peakRmsRef.current) {
-        peakRmsRef.current = rms;
-      }
-
       const refKey = refKeyRef.current;
       if (refKey === null) {
         rafRef.current = requestAnimationFrame(detect);
         return;
       }
 
-      if (lastKeyRef.current !== null && lastKeyRef.current !== refKey) {
-        captureBufferRef.current = [];
-        captureStartRef.current = null;
-        setStrobeCents(null);
-      }
-      lastKeyRef.current = refKey;
       setCurrentNote(`${PIANO_KEYS[refKey].noteName}${PIANO_KEYS[refKey].octave}`);
       setCurrentKeyIndex(refKey);
 
-      // 안정 구간(피크 후 하강)에서만 수집
-      const isStable = rms < peakRmsRef.current * PEAK_RATIO && peakRmsRef.current > 0.015;
-      if (!isStable) {
+      // 최소 RMS 임계값 — 너무 약한 소리는 무시
+      if (rms < 0.008) {
         rafRef.current = requestAnimationFrame(detect);
         return;
       }
@@ -180,7 +160,9 @@ export function useStrobeDetector(
       setCaptureProgress(Math.min(elapsed / stableDurationMs, 1));
 
       if (elapsed >= stableDurationMs && captureBufferRef.current.length >= MIN_SAMPLES) {
-        const med = Math.round(median(captureBufferRef.current) * 10) / 10;
+        const medRaw = median(captureBufferRef.current);
+        if (!isFinite(medRaw)) { rafRef.current = requestAnimationFrame(detect); return; }
+        const med = Math.round(medRaw * 10) / 10;
         setStrobeCents(med);
         setIsCapturing(false);
         setCaptureProgress(0);
