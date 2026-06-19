@@ -78,13 +78,19 @@ export default function SpectrumGraph({
 
       const an = analyserRef.current;
       if (!isActive || !an) {
-        // 비활성 상태 — 빈 축만 표시
-        ctx.strokeStyle = "rgba(255,255,255,0.1)";
+        // 비활성 상태 — 안내 텍스트 표시
+        ctx.strokeStyle = "rgba(255,255,255,0.08)";
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(0, H - 1);
         ctx.lineTo(W, H - 1);
         ctx.stroke();
+
+        ctx.fillStyle = "rgba(255,255,255,0.2)";
+        ctx.font = "12px 'Noto Sans KR', sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("마이크를 시작하면 스펙트럼이 표시됩니다", W / 2, H / 2 + 4);
+
         rafRef.current = requestAnimationFrame(draw);
         return;
       }
