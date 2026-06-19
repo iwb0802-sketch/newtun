@@ -1,8 +1,10 @@
 /**
- * StrobeTuner.tsx — v2 멀티 레인 스트로브
+ * StrobeTuner.tsx — v3 멀티 원형 휠 스트로브
  *
- * - partial에 따라 1~5개 독립 레인 (각 배음 기준 cents 오프셋)
- * - PianoMeter 스타일: 레인 번호, 각 레인 독립 속도
+ * PianoMeter 스타일:
+ * - 배음별 독립 원형 휠 (동심원 or 나란히)
+ * - 휠 안쪽 부채꼴 패턴이 cents 오차에 비례한 속도로 회전
+ * - 맞으면 정지, 높으면 시계방향, 낮으면 반시계
  * - 레인별 색상: 1=레드, 2=오렌지, 3=옐로우, 4=그린, 5=사이언
  */
 
@@ -22,47 +24,40 @@ interface StrobeTunerProps {
   analysisFreq?: number | null;
 }
 
-// 스트로브 패턴 상수
-const BAR_WIDTH  = 3;
-const BAR_GAP    = 2;
-const GROUP_SIZE = 3;
-const GROUP_GAP  = 18;
-const GROUP_W    = GROUP_SIZE * (BAR_WIDTH + BAR_GAP) + GROUP_GAP;
-const GROUP_COUNT = 6;
-const TOTAL_W    = GROUP_COUNT * GROUP_W;
-
-// 레인별 색상 (rgb)
+// 레인별 색상 (r,g,b)
 const LANE_COLORS: [number, number, number][] = [
-  [235, 30,  30],   // 1 — 레드
-  [235, 130, 20],   // 2 — 오렌지
-  [210, 200, 20],   // 3 — 옐로우
-  [30,  210, 80],   // 4 — 그린
-  [30,  180, 235],  // 5 — 사이언
+  [220, 50,  50],   // 1 — 레드
+  [230, 140, 30],   // 2 — 오렌지
+  [200, 200, 30],   // 3 — 옐로우
+  [40,  200, 90],   // 4 — 그린
+  [40,  170, 230],  // 5 — 사이언
 ];
 
-// 배음 차수별 cents 오프셋 계산
-// partial=1 → 기본음 그대로
-// partial=n → n배음 기준 (주파수 n배 = 동일 pitch → cents는 같지만 스트로브 속도를 n배로)
+// partial → 레인 수
 function getLaneCount(partial: number | null | undefined): number {
   if (!partial || partial <= 1) return 1;
-  if (partial <= 2) return 2;
+  if (partial === 2) return 2;
   if (partial <= 4) return 3;
   return Math.min(partial, 5);
 }
 
-interface LaneCanvasProps {
-  laneIndex: number;       // 0-based
-  partial: number;         // 이 레인의 배음 차수 (1,2,3,4,5...)
-  cents: number | null;    // 기준 cents 오프셋
+// 부채꼴 수 (휠 안 패턴 밀도)
+const SECTOR_COUNT = 24;
+
+interface WheelCanvasProps {
+  laneIndex: number;    // 0-based
+  cents: number | null; // 현재 cents 오프셋
   targetCents: number;
   isActive: boolean;
-  height: number;
+  size: number;         // 캔버스 크기 (정사각형)
 }
 
-function LaneCanvas({ laneIndex, partial: _partial, cents, targetCents, isActive, height }: LaneCanvasProps) {
+function WheelCanvas({ laneIndex, cents, targetCents, isActive, size }: WheelCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const offsetRef = useRef(0);
+  const angleRef  = useRef(0);
   const rafRef    = useRef<number | null>(null);
+
+  const [r, g, b] = LANE_COLORS[laneIndex % LANE_COLORS.length];
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -70,96 +65,120 @@ function LaneCanvas({ laneIndex, partial: _partial, cents, targetCents, isActive
     const ctx = canvas.getContext("2d")!;
     const W = canvas.width;
     const H = canvas.height;
+    const cx = W / 2;
+    const cy = H / 2;
+    const outerR = W / 2 - 4;
+    const innerR = outerR * 0.28;
 
-    const [r, g, b] = LANE_COLORS[laneIndex % LANE_COLORS.length];
-    const strobeOffset = cents !== null ? cents - targetCents : null;
-    const isStopped = strobeOffset !== null && Math.abs(strobeOffset) <= 0.8;
+    const offset = cents !== null ? cents - targetCents : null;
+    const isStopped = offset !== null && Math.abs(offset) <= 0.8;
 
-    const animate = () => {
+    const draw = () => {
       ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = "#080808";
-      ctx.fillRect(0, 0, W, H);
 
-      if (!isActive || strobeOffset === null) {
-        ctx.fillStyle = `rgba(${r},${g},${b},0.12)`;
-        for (let gi = 0; gi < GROUP_COUNT + 1; gi++) {
-          for (let bi = 0; bi < GROUP_SIZE; bi++) {
-            const x = gi * GROUP_W + bi * (BAR_WIDTH + BAR_GAP);
-            ctx.fillRect(x, 2, BAR_WIDTH, H - 4);
-          }
+      // 배경 원
+      ctx.beginPath();
+      ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+      ctx.fillStyle = "#0a0e12";
+      ctx.fill();
+
+      // 링 테두리
+      ctx.beginPath();
+      ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+      ctx.strokeStyle = isActive && offset !== null
+        ? `rgba(${r},${g},${b},0.4)`
+        : "rgba(255,255,255,0.08)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      if (!isActive || offset === null) {
+        // 비활성: 흐린 패턴
+        for (let i = 0; i < SECTOR_COUNT; i++) {
+          const startAngle = (i / SECTOR_COUNT) * Math.PI * 2;
+          const endAngle   = ((i + 0.45) / SECTOR_COUNT) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.arc(cx, cy, outerR - 2, startAngle, endAngle);
+          ctx.closePath();
+          ctx.fillStyle = `rgba(${r},${g},${b},0.08)`;
+          ctx.fill();
         }
-        rafRef.current = requestAnimationFrame(animate);
-        return;
+      } else {
+        // 속도: cents 오프셋에 비례, 배음 차수(laneIndex+1)에 비례해 빠름
+        const speedMultiplier = laneIndex + 1;
+        const speed = (offset / 50) * 0.04 * speedMultiplier;
+        angleRef.current += speed;
+
+        const absOff = Math.abs(offset);
+        const brightness = isStopped ? 1.0 : Math.min(1, 0.45 + (absOff / 15) * 0.55);
+        const alpha = isStopped ? 0.95 : Math.min(0.9, 0.35 + (absOff / 20) * 0.55);
+
+        for (let i = 0; i < SECTOR_COUNT; i++) {
+          const baseAngle = (i / SECTOR_COUNT) * Math.PI * 2 + angleRef.current;
+          const endAngle  = baseAngle + (Math.PI * 2 / SECTOR_COUNT) * 0.5;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.arc(cx, cy, outerR - 2, baseAngle, endAngle);
+          ctx.closePath();
+
+          const rc = Math.round(r * brightness);
+          const gc = Math.round(g * brightness);
+          const bc = Math.round(b * brightness);
+          ctx.fillStyle = `rgba(${rc},${gc},${bc},${alpha})`;
+          ctx.fill();
+        }
+
+        // 멈춤 글로우 링
+        if (isStopped) {
+          const grad = ctx.createRadialGradient(cx, cy, innerR, cx, cy, outerR);
+          grad.addColorStop(0, `rgba(${r},${g},${b},0)`);
+          grad.addColorStop(0.6, `rgba(${r},${g},${b},0.15)`);
+          grad.addColorStop(1, `rgba(${r},${g},${b},0.35)`);
+          ctx.beginPath();
+          ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+          ctx.fillStyle = grad;
+          ctx.fill();
+        }
       }
 
-      // 속도: 오프셋에 비례, 배음 차수가 높을수록 동일 오프셋에서 더 빠름
-      const speed = (strobeOffset / 50) * 5;
-      offsetRef.current = ((offsetRef.current + speed) % TOTAL_W + TOTAL_W) % TOTAL_W;
+      // 중앙 빈 원 (클리어)
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+      ctx.fillStyle = "#0a0e12";
+      ctx.fill();
 
-      const absOff = Math.abs(strobeOffset);
-      const brightness = isStopped ? 1 : Math.min(1, 0.4 + (absOff / 12) * 0.6);
-      const rc = Math.round(r * brightness);
-      const gc = Math.round(g * brightness);
-      const bc = Math.round(b * brightness);
+      // 중앙 배음 번호
+      ctx.fillStyle = isStopped
+        ? `rgb(${r},${g},${b})`
+        : `rgba(${r},${g},${b},0.6)`;
+      ctx.font = `bold ${Math.round(innerR * 0.9)}px 'JetBrains Mono', monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`${laneIndex + 1}`, cx, cy);
 
-      ctx.fillStyle = `rgb(${rc},${gc},${bc})`;
-      for (let gi = -1; gi < GROUP_COUNT + 2; gi++) {
-        const groupX = ((gi * GROUP_W) + offsetRef.current) % TOTAL_W;
-        for (let bi = 0; bi < GROUP_SIZE; bi++) {
-          const x = groupX + bi * (BAR_WIDTH + BAR_GAP);
-          if (x > -BAR_WIDTH && x < W + BAR_WIDTH) {
-            ctx.fillRect(x, 2, BAR_WIDTH, H - 4);
-          }
-        }
-      }
-
-      // 멈춤 글로우
+      // 중앙 점 (멈춤)
       if (isStopped) {
-        const grad = ctx.createLinearGradient(0, 0, W, 0);
-        grad.addColorStop(0,   `rgba(${r},${g},${b},0)`);
-        grad.addColorStop(0.5, `rgba(${r},${g},${b},0.2)`);
-        grad.addColorStop(1,   `rgba(${r},${g},${b},0)`);
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, W, H);
+        ctx.beginPath();
+        ctx.arc(cx, cy - innerR * 0.5, 3, 0, Math.PI * 2);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fill();
       }
 
-      rafRef.current = requestAnimationFrame(animate);
+      rafRef.current = requestAnimationFrame(draw);
     };
 
-    rafRef.current = requestAnimationFrame(animate);
+    rafRef.current = requestAnimationFrame(draw);
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [isActive, cents, targetCents, laneIndex, height]);
-
-  const strobeOffset = cents !== null ? cents - targetCents : null;
-  const isStopped = strobeOffset !== null && Math.abs(strobeOffset) <= 0.8;
-  const [r, g, b] = LANE_COLORS[laneIndex % LANE_COLORS.length];
+  }, [isActive, cents, targetCents, laneIndex, size, r, g, b]);
 
   return (
-    <div className="relative">
-      <canvas
-        ref={canvasRef}
-        width={360}
-        height={height}
-        className="w-full block"
-        style={{ imageRendering: "pixelated" }}
-      />
-      {/* 레인 번호 오버레이 */}
-      <div
-        className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold tabular-nums opacity-70"
-        style={{ fontFamily: "'JetBrains Mono', monospace", color: `rgb(${r},${g},${b})` }}
-      >
-        {laneIndex + 1}
-      </div>
-      {/* 멈춤 인디케이터 */}
-      {isStopped && (
-        <div
-          className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-bold"
-          style={{ color: `rgb(${r},${g},${b})` }}
-        >
-          ●
-        </div>
-      )}
-    </div>
+    <canvas
+      ref={canvasRef}
+      width={size}
+      height={size}
+      className="block"
+      style={{ imageRendering: "auto" }}
+    />
   );
 }
 
@@ -170,45 +189,26 @@ export default function StrobeTuner({
 }: StrobeTunerProps) {
   const [targetCents, setTargetCents] = useState(0);
 
-  const activeStable  = stableCents ?? detectedCents;
-  const laneCount     = getLaneCount(partial);
-  const laneHeight    = laneCount <= 2 ? 36 : laneCount <= 3 ? 30 : 24;
+  const activeStable = stableCents ?? detectedCents;
+  const laneCount    = getLaneCount(partial);
+  const offset       = activeStable !== null ? activeStable - targetCents : null;
+  const isStopped    = offset !== null && Math.abs(offset) <= 0.8;
 
-  const strobeOffset  = activeStable !== null ? activeStable - targetCents : null;
-  const isStopped     = strobeOffset !== null && Math.abs(strobeOffset) <= 0.8;
+  // 휠 크기: 레인 수에 따라 조정
+  const wheelSize = laneCount === 1 ? 160 : laneCount === 2 ? 130 : laneCount <= 3 ? 110 : 90;
 
-  const adjustTarget  = (delta: number) =>
+  const adjustTarget = (delta: number) =>
     setTargetCents(prev => Math.round((prev + delta) * 10) / 10);
 
   const syncToDetected = () => {
     if (activeStable !== null) setTargetCents(Math.round(activeStable * 10) / 10);
   };
 
-  // 레인 cents 계산 — 기본음 기준 동일 cents 오프셋 (배음별 독립 스트로브)
-  // 실제 피아노에서 배음은 약간씩 벌어지지만, 여기선 같은 cents를 각 레인에 표시
-  // → 속도 차이로 시각적으로 구분됨 (고배음일수록 주기적 오프셋 변화 빠름)
-  const getLaneCents = (_laneIndex: number) => activeStable;
-
   return (
     <div className="bg-instrument rounded-xl overflow-hidden border border-instrument/60">
 
-      {/* 멀티 레인 스트로브 */}
-      <div className="divide-y divide-instrument/40">
-        {Array.from({ length: laneCount }, (_, i) => (
-          <LaneCanvas
-            key={i}
-            laneIndex={i}
-            partial={i + 1}
-            cents={getLaneCents(i)}
-            targetCents={targetCents}
-            isActive={isActive}
-            height={laneHeight}
-          />
-        ))}
-      </div>
-
-      {/* 상태 표시 */}
-      <div className="px-3 py-1.5 flex items-center justify-between border-t border-instrument/60">
+      {/* 헤더 */}
+      <div className="px-3 py-2 flex items-center justify-between border-b border-instrument/40">
         <div className="flex items-center gap-2">
           {currentNote && (
             <span className="text-sm font-bold text-white" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
@@ -216,31 +216,61 @@ export default function StrobeTuner({
               {currentKeyIndex !== null && currentKeyIndex !== undefined && (
                 <span className="text-xs text-muted-foreground ml-1">건반{currentKeyIndex + 1}</span>
               )}
-              {partial && partial > 1 && analysisFreq && (
-                <span className="text-[10px] text-yellow-400 ml-1.5 font-mono">
-                  ×{partial} {analysisFreq.toFixed(0)}Hz
-                </span>
-              )}
             </span>
           )}
-          <span className="text-xs font-medium" style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            color: isCapturing ? "#f59e0b"
-              : isStopped ? "#22c55e"
-              : strobeOffset === null ? "#4b5563"
-              : strobeOffset > 0 ? "#f97316" : "#60a5fa"
-          }}>
-            {!isActive       ? "대기 중"
-              : isCapturing  ? "● 수집 중"
-              : strobeOffset === null ? "무음"
-              : isStopped    ? "● 영점"
-              : strobeOffset > 0 ? "▶ 높음" : "◄ 낮음"}
-          </span>
+          {partial && partial > 1 && analysisFreq && (
+            <span className="text-[10px] text-yellow-400 font-mono">
+              ×{partial} {analysisFreq.toFixed(0)}Hz
+            </span>
+          )}
         </div>
-        <span className="text-xs text-muted-foreground" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+        <span className="text-xs font-medium" style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          color: isCapturing ? "#f59e0b"
+            : isStopped ? "#22c55e"
+            : offset === null ? "#4b5563"
+            : offset > 0 ? "#f97316" : "#60a5fa"
+        }}>
+          {!isActive        ? "대기 중"
+            : isCapturing   ? "● 수집 중"
+            : offset === null ? "무음"
+            : isStopped     ? "● 영점"
+            : offset > 0    ? "▶ 높음" : "◄ 낮음"}
+        </span>
+      </div>
+
+      {/* 멀티 원형 휠 */}
+      <div className="flex items-center justify-center gap-3 py-4 px-3 flex-wrap">
+        {Array.from({ length: laneCount }, (_, i) => (
+          <div key={i} className="flex flex-col items-center gap-1">
+            <WheelCanvas
+              laneIndex={i}
+              cents={activeStable}
+              targetCents={targetCents}
+              isActive={isActive}
+              size={wheelSize}
+            />
+            <span
+              className="text-[9px] opacity-50"
+              style={{ fontFamily: "'JetBrains Mono', monospace", color: `rgb(${LANE_COLORS[i][0]},${LANE_COLORS[i][1]},${LANE_COLORS[i][2]})` }}
+            >
+              {i + 1}f
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* cents 표시 */}
+      <div className="px-3 pb-2 text-center">
+        <span className="text-lg font-bold tabular-nums" style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          color: isStopped ? "#22c55e"
+            : offset === null ? "#4b5563"
+            : offset > 0 ? "#f97316" : "#60a5fa"
+        }}>
           {activeStable !== null
-            ? <><span className="text-muted-foreground/60">안정</span> <span className="text-yellow-400">{activeStable > 0 ? "+" : ""}{activeStable.toFixed(1)}¢</span></>
-            : <span className="text-muted-foreground/40">대기 중</span>}
+            ? `${activeStable > 0 ? "+" : ""}${activeStable.toFixed(1)}¢`
+            : "--"}
         </span>
       </div>
 
@@ -264,7 +294,7 @@ export default function StrobeTuner({
         <button onClick={() => adjustTarget(10)}
           className="px-2 py-1 bg-instrument/80 hover:bg-instrument/60 text-muted-foreground/60 text-xs rounded-lg font-mono active:scale-95 transition-all">+10</button>
         <button onClick={syncToDetected} disabled={activeStable === null}
-          className="px-2 py-1 bg-primary hover:bg-primary/90 text-primary/60 text-xs rounded-lg active:scale-95 transition-all disabled:opacity-30" title="감지값으로 기준 맞추기">⟳</button>
+          className="px-2 py-1 bg-primary hover:bg-primary/90 text-white text-xs rounded-lg active:scale-95 transition-all disabled:opacity-30" title="감지값으로 기준 맞추기">⟳</button>
       </div>
 
       {/* 안정 대기 시간 */}
@@ -285,7 +315,7 @@ export default function StrobeTuner({
         <div className="px-3 pb-2.5 border-t border-instrument/40 pt-2">
           <button
             onClick={() => onSaveStrobe(activeStable !== null ? activeStable : targetCents)}
-            disabled={activeStable === null && !isStopped}
+            disabled={activeStable === null}
             className={`w-full py-2 rounded-xl text-sm font-bold transition-all active:scale-[0.97] ${
               activeStable !== null
                 ? "bg-in-tune hover:bg-in-tune/90 text-white"

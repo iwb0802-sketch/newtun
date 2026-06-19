@@ -1,10 +1,11 @@
 /**
- * useStrobeDetector.ts (v4 — 단순 재작성)
+ * useStrobeDetector.ts (v5)
  *
- * - 자체 마이크/AudioContext 직접 열기 (usePitchDetector 의존 없음)
+ * - 자체 마이크/AudioContext 직접 열기
  * - 매 프레임 YIN → 타겟 건반 기준 cents 계산 → liveCents 즉시 출력
  * - 300ms 슬라이딩 윈도우 중앙값 → strobeCents (확정값)
  * - referenceKeyIndex 바뀌면 즉시 전체 리셋
+ * - HPS 배음 자동 감지 (partial 1~5)
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -12,8 +13,8 @@ import { PIANO_KEYS } from "./usePitchDetector";
 import { detectPitchYIN, getRMS, median } from "@/lib/tuner/pitchEngine";
 
 export interface StrobeState {
-  liveCents: number | null;        // 매 프레임 실시간 (스트로브 움직임용)
-  strobeCents: number | null;      // 300ms 중앙값 확정값 (pendingCents용)
+  liveCents: number | null;
+  strobeCents: number | null;
   isCapturing: boolean;
   captureProgress: number;
   currentNote: string | null;
@@ -27,38 +28,32 @@ export interface StrobeState {
   analyserRef: { readonly current: AnalyserNode | null };
 }
 
-const WINDOW_MS = 300;   // 슬라이딩 윈도우
-const MIN_RMS   = 0.005; // 무음 임계값
+const WINDOW_MS = 300;
+const MIN_RMS   = 0.005;
 
 export function useStrobeDetector(
   referenceKeyIndex: number | null = null,
   externalAnalyserRef?: { readonly current: AnalyserNode | null }
 ): StrobeState {
-  const [liveCents,      setLiveCents]      = useState<number | null>(null);
-  const [strobeCents,    setStrobeCents]    = useState<number | null>(null);
-  const [isCapturing,    setIsCapturing]    = useState(false);
-  const [captureProgress,setCaptureProgress]= useState(0);
-  const [currentNote,    setCurrentNote]    = useState<string | null>(null);
-  const [currentKeyIndex,setCurrentKeyIndex]= useState<number | null>(null);
-  const [analysisFreq,   setAnalysisFreq]   = useState<number | null>(null);
-  const [partial,        setPartial]        = useState<number>(1);
-  const [isListening,    setIsListening]    = useState(false);
-  const [micError,       setMicError]       = useState<string | null>(null);
+  const [liveCents,       setLiveCents]       = useState<number | null>(null);
+  const [strobeCents,     setStrobeCents]     = useState<number | null>(null);
+  const [isCapturing,     setIsCapturing]     = useState(false);
+  const [captureProgress, setCaptureProgress] = useState(0);
+  const [currentNote,     setCurrentNote]     = useState<string | null>(null);
+  const [currentKeyIndex, setCurrentKeyIndex] = useState<number | null>(null);
+  const [analysisFreq,    setAnalysisFreq]    = useState<number | null>(null);
+  const [partial,         setPartial]         = useState<number>(1);
+  const [isListening,     setIsListening]     = useState(false);
+  const [micError,        setMicError]        = useState<string | null>(null);
 
-  // 오디오 인프라
   const ctxRef      = useRef<AudioContext | null>(null);
   const streamRef   = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const rafRef      = useRef<number | null>(null);
   const bufRef      = useRef<Float32Array | null>(null);
-
-  // 측정 버퍼 (타임스탬프 포함)
   const windowRef   = useRef<Array<{ t: number; c: number }>>([]);
-
-  // referenceKeyIndex ref — detect 루프가 클로저로 최신값 읽음
   const refKeyRef   = useRef<number | null>(referenceKeyIndex);
 
-  // referenceKeyIndex 바뀌면 즉시 리셋
   useEffect(() => {
     refKeyRef.current = referenceKeyIndex;
     windowRef.current = [];
@@ -79,34 +74,30 @@ export function useStrobeDetector(
   }, [referenceKeyIndex]);
 
   // ── 감지 루프 ────────────────────────────────────────────────────
-  const startLoop = useCallback(() => {
-    // external analyser가 있으면 그걸 사용, 없으면 자체 analyserRef 사용
-    const effectiveAnalyser = externalAnalyserRef?.current ?? analyserRef.current;
-    if (!effectiveAnalyser) return;
+  const stopLoop = useCallback(() => {
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+  }, []);
 
-    // external 모드면 buf를 analyser fftSize에 맞게 초기화
-    if (externalAnalyserRef?.current && !bufRef.current) {
-      bufRef.current = new Float32Array(externalAnalyserRef.current.fftSize);
-    }
-    if (!bufRef.current) return;
+  const startLoop = useCallback(() => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
 
     const detect = () => {
-      // 매 프레임마다 external ref 최신값으로 읽기
-      const an  = externalAnalyserRef?.current ?? analyserRef.current;
-      const buf = bufRef.current;
-      if (!an || !buf) return;
-
-      // buf 크기 불일치 시 재할당
-      if (buf.length !== an.fftSize) {
-        bufRef.current = new Float32Array(an.fftSize);
+      // 매 프레임마다 analyser 최신값으로 읽기
+      const an = externalAnalyserRef?.current ?? analyserRef.current;
+      if (!an) {
+        rafRef.current = requestAnimationFrame(detect);
+        return;
       }
 
-      const activeBuf = bufRef.current!;
-      an.getFloatTimeDomainData(activeBuf);
-      const rms = getRMS(activeBuf);
+      // buf 크기 맞추기
+      if (!bufRef.current || bufRef.current.length !== an.fftSize) {
+        bufRef.current = new Float32Array(an.fftSize);
+      }
+      const buf = bufRef.current;
+      an.getFloatTimeDomainData(buf);
+      const rms = getRMS(buf);
 
       if (rms < MIN_RMS) {
-        // 무음 — liveCents 지우고 계속 대기
         setLiveCents(null);
         rafRef.current = requestAnimationFrame(detect);
         return;
@@ -118,54 +109,36 @@ export function useStrobeDetector(
         return;
       }
 
-      // sampleRate: external ctx 있으면 an.context, 없으면 자체 ctxRef
-      const sampleRate = an.context?.sampleRate ?? ctxRef.current?.sampleRate ?? 48000;
-
-      // ── YIN 피치 감지 ─────────────────────────────────────────
+      const sampleRate = an.context.sampleRate;
       const targetFreq = PIANO_KEYS[refKey].freq;
-      // 기본음 ~ 5배음 전체 범위로 탐색
-      const fMin = Math.max(20, targetFreq * 0.8);
-      const fMax = Math.min(8000, targetFreq * 5.5);
-      const fRaw = detectPitchYIN(activeBuf, sampleRate, { fMin, fMax, threshold: 0.15 });
+
+      // 기본음 ~ 5배음 전체 범위로 YIN 탐색
+      const fMin = Math.max(20, targetFreq * 0.85);
+      const fMax = Math.min(8000, targetFreq * 5.3);
+      const fRaw = detectPitchYIN(buf, sampleRate, { fMin, fMax, threshold: 0.15 });
 
       if (fRaw <= 0) {
         rafRef.current = requestAnimationFrame(detect);
         return;
       }
 
-      // ── 감지 주파수가 타겟의 몇 배음인지 역산 ──────────────────
-      // fRaw ≈ targetFreq * n → n 계산
-      let detectedPartial = 1;
-      let cent = 0;
-      {
-        // n=1~5 중 fRaw와 가장 가까운 배음 찾기
-        let bestN = 1;
-        let bestCentAbs = Infinity;
-        for (let n = 1; n <= 5; n++) {
-          const harmonicFreq = targetFreq * n;
-          const c = 1200 * Math.log2(fRaw / harmonicFreq);
-          const absC = Math.abs(c);
-          if (absC < bestCentAbs) {
-            bestCentAbs = absC;
-            bestN = n;
-          }
-        }
-        // 가장 가까운 배음 기준 cents (±55¢ 이내여야 유효)
-        const bestHarmonicFreq = targetFreq * bestN;
-        const rawCent = 1200 * Math.log2(fRaw / bestHarmonicFreq);
-        if (Math.abs(rawCent) > 55) {
-          rafRef.current = requestAnimationFrame(detect);
-          return;
-        }
-        detectedPartial = bestN;
-        cent = rawCent;
+      // 감지 주파수가 타겟의 몇 배음인지 역산 (n=1~5)
+      let bestN = 1;
+      let bestCentAbs = Infinity;
+      for (let n = 1; n <= 5; n++) {
+        const c = Math.abs(1200 * Math.log2(fRaw / (targetFreq * n)));
+        if (c < bestCentAbs) { bestCentAbs = c; bestN = n; }
       }
-      setPartial(detectedPartial);
 
-      // 매 프레임 실시간 출력 (타겟 기준 cents)
+      const cent = 1200 * Math.log2(fRaw / (targetFreq * bestN));
+      if (Math.abs(cent) > 55) {
+        rafRef.current = requestAnimationFrame(detect);
+        return;
+      }
+
+      setPartial(Math.min(bestN, 5));
       setLiveCents(Math.round(cent * 10) / 10);
 
-      // 슬라이딩 윈도우에 추가
       const now = Date.now();
       windowRef.current.push({ t: now, c: cent });
       windowRef.current = windowRef.current.filter(s => now - s.t <= WINDOW_MS);
@@ -187,26 +160,22 @@ export function useStrobeDetector(
     };
 
     rafRef.current = requestAnimationFrame(detect);
-  }, []);
-
-  const stopLoop = useCallback(() => {
-    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-  }, []);
+  }, [externalAnalyserRef]);
 
   // ── 마이크 시작/종료 ─────────────────────────────────────────────
   const startListening = useCallback(async () => {
     try {
       setMicError(null);
 
-      // external analyser 모드: 마이크 안 열고 바로 루프 시작
       if (externalAnalyserRef) {
+        // external analyser 모드: 마이크 안 열고 루프만 시작
         startLoop();
         setIsListening(true);
         return;
       }
 
-      // 이미 열려 있으면 재사용
-      if (ctxRef.current && streamRef.current) {
+      // 이미 열려 있으면 루프만 재시작
+      if (analyserRef.current) {
         startLoop();
         setIsListening(true);
         return;
@@ -229,16 +198,16 @@ export function useStrobeDetector(
       const src = ctx.createMediaStreamSource(stream);
       src.connect(analyser);
 
+      // analyser 세팅 완료 후 루프 시작
       setIsListening(true);
       startLoop();
     } catch (e: unknown) {
       setMicError(e instanceof Error ? e.message : "마이크 오류");
     }
-  }, [startLoop]);
+  }, [startLoop, externalAnalyserRef]);
 
   const stopListening = useCallback(() => {
     stopLoop();
-    // external 모드면 마이크/ctx는 닫지 않음 (usePitchDetector 소유)
     if (!externalAnalyserRef) {
       streamRef.current?.getTracks().forEach(t => t.stop());
       streamRef.current = null;
@@ -255,11 +224,9 @@ export function useStrobeDetector(
     setCaptureProgress(0);
   }, [stopLoop, externalAnalyserRef]);
 
-  // 언마운트 시 정리
   useEffect(() => {
     return () => {
       stopLoop();
-      // external 모드면 마이크/ctx 정리하지 않음
       if (!externalAnalyserRef) {
         streamRef.current?.getTracks().forEach(t => t.stop());
         ctxRef.current?.close();
