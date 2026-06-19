@@ -112,28 +112,31 @@ export function useStrobeDetector(
       const sampleRate = an.context.sampleRate;
       const targetFreq = PIANO_KEYS[refKey].freq;
 
-      // 기본음 ~ 5배음 전체 범위로 YIN 탐색
-      const fMin = Math.max(20, targetFreq * 0.85);
-      const fMax = Math.min(8000, targetFreq * 5.3);
-      const fRaw = detectPitchYIN(buf, sampleRate, { fMin, fMax, threshold: 0.15 });
+      // 자동탭과 동일: 전체 피아노 범위로 YIN 탐색
+      const fRaw = detectPitchYIN(buf, sampleRate, { fMin: 27, fMax: 5000, threshold: 0.15 });
 
       if (fRaw <= 0) {
         rafRef.current = requestAnimationFrame(detect);
         return;
       }
 
-      // 감지 주파수가 타겟의 몇 배음인지 역산 (n=1~5)
+      // 감지 주파수 → 타겟 건반 기준 cents (옥타브 정규화)
+      const rawCent = 1200 * Math.log2(fRaw / targetFreq);
+      const octShift = Math.round(rawCent / 1200);
+      const cent = rawCent - octShift * 1200;
+
+      // ±55¢ 초과 → 완전히 다른 음, 무시
+      if (Math.abs(cent) > 55) {
+        rafRef.current = requestAnimationFrame(detect);
+        return;
+      }
+
+      // 배음 차수 역산 (n=1~5)
       let bestN = 1;
       let bestCentAbs = Infinity;
       for (let n = 1; n <= 5; n++) {
         const c = Math.abs(1200 * Math.log2(fRaw / (targetFreq * n)));
         if (c < bestCentAbs) { bestCentAbs = c; bestN = n; }
-      }
-
-      const cent = 1200 * Math.log2(fRaw / (targetFreq * bestN));
-      if (Math.abs(cent) > 55) {
-        rafRef.current = requestAnimationFrame(detect);
-        return;
       }
 
       setPartial(Math.min(bestN, 5));
