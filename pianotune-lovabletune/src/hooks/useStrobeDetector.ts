@@ -41,6 +41,7 @@ export function useStrobeDetector(
   const [currentNote,    setCurrentNote]    = useState<string | null>(null);
   const [currentKeyIndex,setCurrentKeyIndex]= useState<number | null>(null);
   const [analysisFreq,   setAnalysisFreq]   = useState<number | null>(null);
+  const [partial,        setPartial]        = useState<number>(1);
   const [isListening,    setIsListening]    = useState(false);
   const [micError,       setMicError]       = useState<string | null>(null);
 
@@ -122,36 +123,51 @@ export function useStrobeDetector(
 
       // ── YIN 피치 감지 ─────────────────────────────────────────
       const targetFreq = PIANO_KEYS[refKey].freq;
-      // 타겟 건반 ±1옥타브 범위로만 YIN 탐색
-      const fMin = targetFreq / 2.5;
-      const fMax = targetFreq * 2.5;
-      const fRaw = detectPitchYIN(activeBuf, sampleRate, { fMin: Math.max(20, fMin), fMax: Math.min(8000, fMax), threshold: 0.15 });
+      // 기본음 ~ 5배음 전체 범위로 탐색
+      const fMin = Math.max(20, targetFreq * 0.8);
+      const fMax = Math.min(8000, targetFreq * 5.5);
+      const fRaw = detectPitchYIN(activeBuf, sampleRate, { fMin, fMax, threshold: 0.15 });
 
       if (fRaw <= 0) {
         rafRef.current = requestAnimationFrame(detect);
         return;
       }
 
-      // 타겟 건반 기준 cents 계산
-      const rawCent = 1200 * Math.log2(fRaw / targetFreq);
-
-      // 옥타브 정규화 → 가장 가까운 옥타브 기준 -50~+50¢
-      const octShift = Math.round(rawCent / 1200);
-      const cent = rawCent - octShift * 1200;
-
-      // ±55¢ 초과 → 완전히 다른 음, 무시
-      if (Math.abs(cent) > 55) {
-        rafRef.current = requestAnimationFrame(detect);
-        return;
+      // ── 감지 주파수가 타겟의 몇 배음인지 역산 ──────────────────
+      // fRaw ≈ targetFreq * n → n 계산
+      let detectedPartial = 1;
+      let cent = 0;
+      {
+        // n=1~5 중 fRaw와 가장 가까운 배음 찾기
+        let bestN = 1;
+        let bestCentAbs = Infinity;
+        for (let n = 1; n <= 5; n++) {
+          const harmonicFreq = targetFreq * n;
+          const c = 1200 * Math.log2(fRaw / harmonicFreq);
+          const absC = Math.abs(c);
+          if (absC < bestCentAbs) {
+            bestCentAbs = absC;
+            bestN = n;
+          }
+        }
+        // 가장 가까운 배음 기준 cents (±55¢ 이내여야 유효)
+        const bestHarmonicFreq = targetFreq * bestN;
+        const rawCent = 1200 * Math.log2(fRaw / bestHarmonicFreq);
+        if (Math.abs(rawCent) > 55) {
+          rafRef.current = requestAnimationFrame(detect);
+          return;
+        }
+        detectedPartial = bestN;
+        cent = rawCent;
       }
+      setPartial(detectedPartial);
 
-      // 매 프레임 실시간 출력
+      // 매 프레임 실시간 출력 (타겟 기준 cents)
       setLiveCents(Math.round(cent * 10) / 10);
 
       // 슬라이딩 윈도우에 추가
       const now = Date.now();
       windowRef.current.push({ t: now, c: cent });
-      // 오래된 샘플 제거
       windowRef.current = windowRef.current.filter(s => now - s.t <= WINDOW_MS);
 
       const samples = windowRef.current;
@@ -255,7 +271,7 @@ export function useStrobeDetector(
     liveCents, strobeCents,
     isCapturing, captureProgress,
     currentNote, currentKeyIndex, analysisFreq,
-    partial: 1,
+    partial,
     isListening, startListening, stopListening, micError,
     analyserRef,
   };
