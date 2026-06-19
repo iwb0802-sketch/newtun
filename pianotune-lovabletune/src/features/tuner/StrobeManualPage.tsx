@@ -16,6 +16,7 @@ import { useManualSequence } from "@/features/tuner/manual/useManualSequence";
 import SectionTabs from "@/features/tuner/manual/SectionTabs";
 import TargetNoteBar from "@/features/tuner/manual/TargetNoteBar";
 import StrobeTuner from "@/components/tuner/StrobeTuner";
+import SpectrumGraph from "@/components/tuner/SpectrumGraph";
 import TuningCurveChart from "@/components/tuner/TuningCurveChart";
 import { exportToPdf, exportToImage } from "@/lib/tuner/exportPdf";
 
@@ -56,6 +57,7 @@ export default function StrobeManualPage() {
     startListening,
     stopListening,
     micError,
+    analyserRef,
   } = useStrobeDetector(seq.targetKeyIndex);
 
   useWakeLock(isListening);
@@ -230,6 +232,13 @@ export default function StrobeManualPage() {
               partial={partial}
             />
           </div>
+
+          {/* 스펙트럼 그래프 */}
+          <SpectrumGraph
+            analyserRef={analyserRef}
+            targetKeyIndex={seq.targetKeyIndex}
+            isActive={isListening}
+          />
 
           {/* 확정 / 리셋 버튼 */}
           <div className="px-4 py-3 border-t border-border/60 flex gap-2">

@@ -24,6 +24,7 @@ export interface StrobeState {
   startListening: () => Promise<void>;
   stopListening: () => void;
   micError: string | null;
+  analyserRef: { readonly current: AnalyserNode | null };
 }
 
 const WINDOW_MS = 300;   // 슬라이딩 윈도우
@@ -256,5 +257,6 @@ export function useStrobeDetector(
     currentNote, currentKeyIndex, analysisFreq,
     partial: 1,
     isListening, startListening, stopListening, micError,
+    analyserRef,
   };
 }

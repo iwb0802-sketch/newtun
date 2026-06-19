@@ -10,6 +10,7 @@
 
 import PitchMeter from "@/components/tuner/PitchMeter";
 import ReferenceAudioPanel from "@/components/tuner/ReferenceAudioPanel";
+import SpectrumGraph from "@/components/tuner/SpectrumGraph";
 import TuningCurveChart from "@/components/tuner/TuningCurveChart";
 import { usePitchDetector, PIANO_KEYS, PitchResult } from "@/hooks/usePitchDetector";
 import { useTuningSession } from "@/hooks/useTuningSession";
@@ -134,7 +135,7 @@ export default function Home() {
     }
   }, [recordMeasurement]);
 
-  const { isListening, currentPitch, startListening, stopListening, error, isRecovering } =
+  const { isListening, currentPitch, startListening, stopListening, error, isRecovering, analyserRef } =
     usePitchDetector(handlePitchDetected, fftSize);
 
   // 화면 꺼짐 방지 - 마이크 켜지면 자동 활성화
@@ -541,6 +542,13 @@ export default function Home() {
                 </div>
                 <TuningCurveChart data={chartData} activeKeyIndex={displayPitch?.keyIndex ?? null} showStrobeOnly={showStrobeOnly} />
               </div>
+
+              {/* 스펙트럼 그래프 */}
+              <SpectrumGraph
+                analyserRef={analyserRef}
+                targetKeyIndex={currentPitch?.keyIndex ?? null}
+                isActive={isListening}
+              />
 
               {/* 컨트롤 바 */}
               <div className="bg-card border border-border rounded-xl px-4 py-3 flex items-center justify-between shadow-sm flex-wrap gap-2">
