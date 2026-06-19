@@ -1,16 +1,18 @@
 /**
- * useStrobeDetector.ts (v5)
+ * useStrobeDetector.ts (v6)
  *
  * - 자체 마이크/AudioContext 직접 열기
  * - 매 프레임 YIN → 타겟 건반 기준 cents 계산 → liveCents 즉시 출력
  * - 300ms 슬라이딩 윈도우 중앙값 → strobeCents (확정값)
  * - referenceKeyIndex 바뀌면 즉시 전체 리셋
  * - HPS 배음 자동 감지 (partial 1~5)
+ * - zone 기반 YIN 파라미터 동적 적용 (저/중/고음)
+ * - fftSize 8192 고정 (저음 27Hz 감지 보장)
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { PIANO_KEYS } from "./usePitchDetector";
-import { detectPitchYIN, getRMS, median } from "@/lib/tuner/pitchEngine";
+import { detectPitchYIN, getRMS, median, getZone } from "@/lib/tuner/pitchEngine";
 
 export interface StrobeState {
   liveCents: number | null;
@@ -29,7 +31,21 @@ export interface StrobeState {
 }
 
 const WINDOW_MS = 300;
-const MIN_RMS   = 0.005;
+const MIN_RMS   = 0.002; // 낮춤: 0.005 → 0.002 (저음 건반 약한 신호 커버)
+const FFT_SIZE  = 8192;  // 저음(27Hz) 감지 위해 8192 고정
+
+/** referenceKeyIndex 기준 zone별 YIN 파라미터 */
+function getYINParams(refKey: number): { fMin: number; fMax: number; threshold: number } {
+  const zone = getZone(refKey);
+  const targetFreq = PIANO_KEYS[refKey].freq;
+  if (zone === "low") {
+    return { fMin: Math.max(20, targetFreq * 0.4), fMax: Math.min(300, targetFreq * 6), threshold: 0.10 };
+  } else if (zone === "mid") {
+    return { fMin: Math.max(100, targetFreq * 0.5), fMax: Math.min(800, targetFreq * 4), threshold: 0.10 };
+  } else {
+    return { fMin: Math.max(400, targetFreq * 0.7), fMax: Math.min(5000, targetFreq * 3), threshold: 0.12 };
+  }
+}
 
 export function useStrobeDetector(
   referenceKeyIndex: number | null = null,
@@ -112,8 +128,9 @@ export function useStrobeDetector(
       const sampleRate = an.context.sampleRate;
       const targetFreq = PIANO_KEYS[refKey].freq;
 
-      // 자동탭과 동일: 전체 피아노 범위로 YIN 탐색
-      const fRaw = detectPitchYIN(buf, sampleRate, { fMin: 27, fMax: 5000, threshold: 0.15 });
+      // zone 기반 YIN 파라미터 적용 (저/중/고음 구분)
+      const yinParams = getYINParams(refKey);
+      const fRaw = detectPitchYIN(buf, sampleRate, yinParams);
 
       if (fRaw <= 0) {
         rafRef.current = requestAnimationFrame(detect);
@@ -193,7 +210,7 @@ export function useStrobeDetector(
       ctxRef.current = ctx;
 
       const analyser = ctx.createAnalyser();
-      analyser.fftSize = 4096;
+      analyser.fftSize = FFT_SIZE; // 8192 고정 — 저음(A0 27Hz) 감지 보장
       analyser.smoothingTimeConstant = 0;
       analyserRef.current = analyser;
       bufRef.current = new Float32Array(analyser.fftSize);
