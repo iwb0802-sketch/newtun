@@ -24,7 +24,7 @@ import { useUserRole } from "@/hooks/useUserRole";
 import { useManualSequence } from "@/features/tuner/manual/useManualSequence";
 import SectionTabs from "@/features/tuner/manual/SectionTabs";
 import TargetNoteBar from "@/features/tuner/manual/TargetNoteBar";
-import StrobeTuner from "@/components/tuner/StrobeTuner";
+import StrobeBar from "@/components/tuner/StrobeBar";
 import SpectrumGraph from "@/components/tuner/SpectrumGraph";
 import TuningCurveChart from "@/components/tuner/TuningCurveChart";
 import { exportToPdf, exportToImage } from "@/lib/tuner/exportPdf";
@@ -268,9 +268,9 @@ export default function TestPage() {
             </div>
           )}
 
-          {/* 스트로브 바 */}
+          {/* 스트로브 바 (PT-100 스타일) */}
           <div className="px-0">
-            <StrobeTuner
+            <StrobeBar
               detectedCents={liveCents}
               stableCents={pendingCents}
               isCapturing={isCapturing}
