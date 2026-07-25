@@ -1,14 +1,19 @@
 /**
- * usePitchDetector.ts (v3 — useStrobeDetector 마이크 패턴 기반 완전 재작성)
+ * usePitchDetector.ts (v4 — 시험용/복합 엔진 요소 일부 이식)
  *
  * - useStrobeDetector의 검증된 마이크/AudioContext 패턴 그대로 사용
  * - 전 건반 YIN 감지 → freqToCentOffset으로 keyIndex 자동 추출
- * - 슬라이딩 윈도우 안정화 (WINDOW=8, MIN_MATCH=4)
+ * - HPS 배음보정: YIN 1차 후보 건반 기준으로 옥타브 오인식 보정 (저/중음)
+ * - Goertzel 도미넌스 검증: 확정 직전 후보 건반 주파수가 실제로 우세한지 재확인
+ * - 슬라이딩 윈도우 다수결(WINDOW=8, MIN_MATCH=4) + 표준편차 체크로 확정
  * - return shape 기존 유지 (Home.tsx, PrecisionPage.tsx 호환)
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { detectPitchYIN, getRMS, median } from "@/lib/tuner/pitchEngine";
+import {
+  detectPitchYIN, getRMS, median, stddev,
+  correctOctaveByHPS, goertzel, getZone, getStabilityConfig,
+} from "@/lib/tuner/pitchEngine";
 
 // ── 88건반 정의 (export: useStrobeDetector에서 import) ──────────────
 export const PIANO_KEYS = Array.from({ length: 88 }, (_, i) => {
@@ -72,6 +77,7 @@ export function usePitchDetector(
   const analyserRef = useRef<AnalyserNode | null>(null);
   const rafRef      = useRef<number | null>(null);
   const bufRef      = useRef<Float32Array | null>(null);
+  const freqBufRef  = useRef<Float32Array | null>(null); // dB 스펙트럼 (HPS 배음보정용)
 
   // 안정화 버퍼
   const recentKeys  = useRef<number[]>([]);
@@ -90,15 +96,21 @@ export function usePitchDetector(
       // 매 프레임 ref 최신값으로 읽기 (useStrobeDetector 동일 패턴)
       const analyser = analyserRef.current;
       const buf      = bufRef.current;
-      if (!analyser || !buf) return;
+      const freqBuf  = freqBufRef.current;
+      if (!analyser || !buf || !freqBuf) return;
 
       // buf 크기 불일치 시 재할당
       if (buf.length !== analyser.fftSize) {
         bufRef.current = new Float32Array(analyser.fftSize);
       }
+      if (freqBuf.length !== analyser.frequencyBinCount) {
+        freqBufRef.current = new Float32Array(analyser.frequencyBinCount);
+      }
 
-      const activeBuf = bufRef.current!;
+      const activeBuf     = bufRef.current!;
+      const activeFreqBuf = freqBufRef.current!;
       analyser.getFloatTimeDomainData(activeBuf);
+      analyser.getFloatFrequencyData(activeFreqBuf);
       const rms = getRMS(activeBuf);
 
       if (rms < MIN_RMS) {
@@ -115,8 +127,14 @@ export function usePitchDetector(
       const fRaw = detectPitchYIN(activeBuf, sampleRate, { fMin: 27, fMax: 5000, threshold: 0.15 });
 
       if (fRaw > 0) {
-        const r = freqToCentOffset(fRaw);
-        if (r) {
+        // 1차 후보 (YIN 원시값)
+        const rough = freqToCentOffset(fRaw);
+        if (rough) {
+          // HPS 배음보정 — 저/중음에서 배음을 기음으로 오인식하는 경우 보정
+          // (correctOctaveByHPS는 keyIndex>=52면 그대로 반환)
+          const fCorrected = correctOctaveByHPS(fRaw, activeFreqBuf, sampleRate, analyser.fftSize, rough.keyIndex);
+          const r = fCorrected !== fRaw ? (freqToCentOffset(fCorrected) ?? rough) : rough;
+
           recentKeys.current.push(r.keyIndex);
           recentCents.current.push(r.cents);
           if (recentKeys.current.length > WINDOW) {
@@ -135,21 +153,36 @@ export function usePitchDetector(
             const centsArr = recentKeys.current
               .map((k, i) => k === stableKi ? recentCents.current[i] : null)
               .filter((v): v is number => v !== null);
-            const stableCents = Math.round(median(centsArr) * 10) / 10;
 
-            const result: PitchResult = {
-              frequency:  fRaw,
-              keyIndex:   stableKi,
-              noteName:   PIANO_KEYS[stableKi].noteName,
-              octave:     PIANO_KEYS[stableKi].octave,
-              cents:      stableCents,
-              confidence: Number(topCount) / WINDOW,
-              rms,
-            };
+            // 표준편차 체크 — 튀는 값이 섞여있으면 이번 프레임은 확정 보류
+            const sd = centsArr.length >= 2 ? stddev(centsArr) : 0;
+            const zone = getZone(stableKi);
+            const stabConf = getStabilityConfig(zone);
 
-            if (result.confidence >= 0.5) {
-              setCurrentPitch(result);
-              onPitchRef.current?.(result);
+            // Goertzel 도미넌스 검증 — 확정 직전 후보 건반 주파수가 실제로 우세한지 재확인
+            const baseFreq = PIANO_KEYS[stableKi].freq;
+            const gTarget = goertzel(activeBuf, sampleRate, baseFreq).magnitude;
+            const gLo = goertzel(activeBuf, sampleRate, baseFreq * Math.pow(2, -50 / 1200)).magnitude;
+            const gHi = goertzel(activeBuf, sampleRate, baseFreq * Math.pow(2, 50 / 1200)).magnitude;
+            const dominant = gTarget > Math.max(gLo, gHi, 1e-9) * 1.05;
+
+            if (dominant && sd <= stabConf.maxStddev * 2) {
+              const stableCents = Math.round(median(centsArr) * 10) / 10;
+
+              const result: PitchResult = {
+                frequency:  fCorrected,
+                keyIndex:   stableKi,
+                noteName:   PIANO_KEYS[stableKi].noteName,
+                octave:     PIANO_KEYS[stableKi].octave,
+                cents:      stableCents,
+                confidence: Number(topCount) / WINDOW,
+                rms,
+              };
+
+              if (result.confidence >= 0.5) {
+                setCurrentPitch(result);
+                onPitchRef.current?.(result);
+              }
             }
           }
         }
@@ -190,6 +223,7 @@ export function usePitchDetector(
       analyser.smoothingTimeConstant = 0;
       analyserRef.current = analyser;
       bufRef.current = new Float32Array(analyser.fftSize);
+      freqBufRef.current = new Float32Array(analyser.frequencyBinCount);
 
       const src = ctx.createMediaStreamSource(stream);
       src.connect(analyser);
@@ -222,6 +256,7 @@ export function usePitchDetector(
     ctxRef.current = null;
     analyserRef.current = null;
     bufRef.current = null;
+    freqBufRef.current = null;
     recentKeys.current = [];
     recentCents.current = [];
     setIsListening(false);
