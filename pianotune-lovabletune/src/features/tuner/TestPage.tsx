@@ -147,7 +147,11 @@ export default function TestPage() {
   const targetKey = PIANO_KEYS[seq.targetKeyIndex];
 
   // 표시용 값: 엔진 result에서 그대로 파생
-  const liveCents      = result?.liveCents ?? null;
+  // 스트로브 실시간 흐름용 — 교차검증 전이라도 즉시 표시되도록 원시값 우선순위로 선택
+  // (YIN 우선, 없으면 Goertzel) — 교차검증된 liveCents는 확정 순간(finalCents)에만 사용
+  const rawLiveCents    = result?.yinCents ?? result?.goertzelCents ?? null;
+  const liveCents       = rawLiveCents; // 스트로브/큰 숫자 표시에 사용하는 실시간 값
+  const validatedCents  = result?.liveCents ?? null; // 교차검증된 가중평균 (엔진 상세 패널용)
   const isCapturing    = result?.isCapturing ?? false;
   const captureProgress = result?.captureProgress ?? 0;
   const currentNote     = result ? `${result.noteName}${result.octave}` : null;
@@ -295,7 +299,7 @@ export default function TestPage() {
             <div className="space-y-1">
               <EngineRow label="YIN" cents={result?.yinCents ?? null} active={!!result} />
               <EngineRow label="Goertzel" cents={result?.goertzelCents ?? null} active={!!result?.signalOk} />
-              <EngineRow label="복합 (확정값)" cents={result?.liveCents ?? null} active={!!result} highlight={crossValid} />
+              <EngineRow label="복합 (교차검증)" cents={validatedCents} active={!!result} highlight={crossValid} />
             </div>
             {result && !crossValid && (
               <p className="text-xs text-warn/80 mt-2 px-1">YIN ↔ Goertzel 편차 큼 — Goertzel 단독 사용 중</p>
