@@ -1,5 +1,5 @@
 /**
- * StrobeManualPage.tsx — 수동 스트로브 조율 모드 (v2)
+ * TestPage.tsx — 시험용 모드 (수동 스트로브 조율 모드 기반 복제, v1)
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -139,15 +139,15 @@ export default function StrobeManualPage() {
             </svg>
           </div>
           <div>
-            <h1 className="text-base font-bold text-foreground leading-tight">수동 조율</h1>
-            <p className="text-xs text-muted-foreground/80">스트로브 안정 확인 후 수동 확정</p>
+            <h1 className="text-base font-bold text-foreground leading-tight">시험용</h1>
+            <p className="text-xs text-muted-foreground/80">스트로브 안정 확인 후 수동 확정 (시험용)</p>
           </div>
         </div>
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
-          <Link to="/"       className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">자동</Link>
-          <Link to="/test"   className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">시험용</Link>
-          <Link to="/manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">복합</Link>
-          <span              className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">수동</span>
+          <Link to="/"              className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">자동</Link>
+          <span                     className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">시험용</span>
+          <Link to="/manual"        className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">복합</Link>
+          <Link to="/strobe-manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">수동</Link>
         </nav>
       </header>
 
