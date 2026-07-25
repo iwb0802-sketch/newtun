@@ -1,11 +1,12 @@
 /**
- * StrobeBar.tsx — PT-100 스타일 LED 스트로브 바
+ * StrobeBar.tsx — PT-100 튜닝스코프 실물 참고 리메이크 (v2)
  *
- * 야마하 PT-100 튜닝스코프 참고:
- * - 어두운 패널 위 가로 LED 세그먼트 바
- * - 세그먼트 패턴이 흐르듯 좌/우로 이동 (cents 오차 ∝ 이동 속도)
- * - 편차가 0에 가까워지면 패턴이 멈춤 (정지 = 정확)
- * - 하단에 LCD 스타일 텍스트 리드아웃 (OCT-NOTE / KEY / CENT)
+ * 참고 사진 특징:
+ * - 어두운 플라스틱 베젤 + 유리 패널 안에 2개의 독립 LED 스트로브 윈도우
+ * - 각 윈도우는 연속된 LED 블록(라이트 바)이 켜져 있고, 편차에 비례해 블록이
+ *   좌우로 스텝식으로 이동(칩처럼 딱딱 끊기며 흐름) — 정확하면 정지
+ * - 우측 끝에 작은 상태 LED (CHARGE 자리 → 여기선 SIGNAL 표시로 재활용)
+ * - 하단은 그레이-그린 LCD 패널: OCT / NOTE / KEY / CENT 4열 리드아웃
  */
 
 import { useEffect, useRef } from "react";
@@ -21,25 +22,74 @@ interface StrobeBarProps {
   analysisFreq?: number | null;
 }
 
-// LED 색상 (PT-100 마젠타/핑크 인광색)
-const LED_ON = "#ec4899";
-const LED_ON_GLOW = "rgba(236,72,153,0.55)";
-const LED_DIM = "rgba(236,72,153,0.10)";
-const LED_LOCK = "#34d399"; // 정확(in-tune) 시 에메랄드로 전환
+const LOCK_THRESHOLD = 1.5;     // 이 이내면 정지(고정)로 간주
+const WINDOW_SEG_COUNT = 16;    // 윈도우 내 세그먼트 슬롯 수
+const LIT_BLOCK_SIZE = 8;       // 켜지는 연속 세그먼트 수
+const STEP_PER_SEC_PER_CENT = 0.9; // cents당 초당 스텝 이동량
 
-const SEG_W = 6;      // 세그먼트 폭 (px)
-const SEG_GAP = 3;    // 세그먼트 간격 (px)
-const PATTERN_LEN = 4; // 패턴 주기 내 세그먼트 개수 (on-on-off-off 반복)
-const LIT_COUNT = 2;   // 주기 내 켜지는 세그먼트 수
-const SPEED_PX_PER_CENT = 3.2; // cents당 초당 이동 픽셀
-const LOCK_THRESHOLD = 1.5;    // 이 이내면 정지(고정)로 간주
+// 노트명에서 옥타브/음이름 분리
+function splitNote(note: string | null | undefined): { name: string; octave: string } {
+  if (!note) return { name: "—", octave: "—" };
+  const m = note.match(/^([A-G]#?)(-?\d+)$/);
+  if (!m) return { name: note, octave: "—" };
+  return { name: m[1], octave: m[2] };
+}
+
+function drawWindow(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number,
+  phase: number, locked: boolean, isActive: boolean, scale: number,
+) {
+  const segGap = 2 * scale;
+  const segW = (w - segGap * (WINDOW_SEG_COUNT - 1)) / WINDOW_SEG_COUNT;
+
+  // 스텝 단위로 끊기게 (real LED chasing 느낌)
+  const blockStart = isActive ? Math.floor(phase) % WINDOW_SEG_COUNT : 0;
+  const normStart = ((blockStart % WINDOW_SEG_COUNT) + WINDOW_SEG_COUNT) % WINDOW_SEG_COUNT;
+
+  const onColor = locked ? "#4ade80" : "#f43f8f";
+  const glowColor = locked ? "rgba(74,222,128,0.75)" : "rgba(244,63,143,0.75)";
+
+  for (let i = 0; i < WINDOW_SEG_COUNT; i++) {
+    const sx = x + i * (segW + segGap);
+    // 슬롯 i가 lit 블록 범위(wrap-around 포함) 안에 있는지
+    let rel = i - normStart;
+    if (rel < 0) rel += WINDOW_SEG_COUNT;
+    const lit = isActive && rel < LIT_BLOCK_SIZE;
+
+    ctx.save();
+    if (lit) {
+      ctx.shadowColor = glowColor;
+      ctx.shadowBlur = 6 * scale;
+      ctx.fillStyle = onColor;
+    } else {
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "rgba(120,20,50,0.22)";
+    }
+    const r = Math.min(segW, h) * 0.18;
+    roundRect(ctx, sx, y, segW, h, r);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
 
 export default function StrobeBar({
   detectedCents, stableCents, isCapturing, isActive,
   currentNote, currentKeyIndex, partial, analysisFreq,
 }: StrobeBarProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const phaseRef = useRef(0);
+  const phase1Ref = useRef(0);
+  const phase2Ref = useRef(0);
   const rafRef = useRef<number | null>(null);
   const lastTsRef = useRef<number | null>(null);
   const centsRef = useRef<number | null>(null);
@@ -71,70 +121,81 @@ export default function StrobeBar({
       const cents = isActive ? centsRef.current : null;
       const locked = cents !== null && Math.abs(cents) <= LOCK_THRESHOLD;
 
-      // 이동 속도: cents가 클수록 빠르게, lock 범위면 정지
-      const speed = cents !== null && !locked ? cents * SPEED_PX_PER_CENT : 0;
-      phaseRef.current += speed * dt;
+      const stepSpeed = cents !== null && !locked ? cents * STEP_PER_SEC_PER_CENT : 0;
+      phase1Ref.current += stepSpeed * dt;
+      // 2번째 윈도우(2배음 검증) — 편차가 2배로 반영되어 더 빠르게 흐름 (물리적으로 정확)
+      phase2Ref.current += stepSpeed * 2 * dt;
 
       const w = canvas.width;
       const h = canvas.height;
       const scale = dpr;
 
-      // 배경
-      ctx.fillStyle = "#0a0a0d";
+      // ── 베젤 배경 (어두운 플라스틱) ──
+      const bezelGrad = ctx.createLinearGradient(0, 0, 0, h);
+      bezelGrad.addColorStop(0, "#2a2a30");
+      bezelGrad.addColorStop(1, "#15151a");
+      ctx.fillStyle = bezelGrad;
       ctx.fillRect(0, 0, w, h);
 
-      // 중앙 기준선 (희미하게)
-      ctx.strokeStyle = "rgba(255,255,255,0.08)";
-      ctx.lineWidth = 1 * scale;
+      // ── 유리 패널 (스트로브 창) ──
+      const panelX = 4 * scale, panelY = 4 * scale;
+      const panelW = w - panelX * 2, panelH = h - panelY * 2;
+      ctx.fillStyle = "#050507";
+      roundRect(ctx, panelX, panelY, panelW, panelH, 4 * scale);
+      ctx.fill();
+
+      // 윈도우 배치: 좌(45%) / 갭 / 우(35%) / 상태 LED
+      const padX = 10 * scale;
+      const gapBetween = 18 * scale;
+      const sigW = 10 * scale;
+      const availW = panelW - padX * 2 - gapBetween - sigW - 10 * scale;
+      const win1W = availW * 0.56;
+      const win2W = availW * 0.44;
+      const winH = panelH * 0.5;
+      const winY = panelY + panelH * 0.14;
+
+      const win1X = panelX + padX;
+      const win2X = win1X + win1W + gapBetween;
+      const sigX = win2X + win2W + 14 * scale;
+
+      drawWindow(ctx, win1X, winY, win1W, winH, phase1Ref.current, locked, isActive, scale);
+      drawWindow(ctx, win2X, winY, win2W, winH, phase2Ref.current, locked, isActive, scale);
+
+      // 상태 LED (신호 감지 표시)
+      const sigOn = isActive && cents !== null;
+      ctx.save();
+      ctx.shadowColor = sigOn ? "rgba(74,222,128,0.9)" : "transparent";
+      ctx.shadowBlur = sigOn ? 6 * scale : 0;
+      ctx.fillStyle = sigOn ? "#4ade80" : "rgba(255,255,255,0.12)";
       ctx.beginPath();
-      ctx.moveTo(w / 2, 0);
-      ctx.lineTo(w / 2, h);
-      ctx.stroke();
+      ctx.arc(sigX + sigW / 2, winY + winH / 2, sigW / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
 
-      const segFull = (SEG_W + SEG_GAP) * scale;
-      const litColor = locked && cents !== null ? LED_LOCK : LED_ON;
-      const glowColor = locked && cents !== null
-        ? "rgba(52,211,153,0.55)"
-        : LED_ON_GLOW;
+      // 중앙 정렬 기준선 (희미한 세로선, 각 윈도우 중앙)
+      ctx.strokeStyle = "rgba(255,255,255,0.10)";
+      ctx.lineWidth = 1 * scale;
+      [win1X + win1W / 2, win2X + win2W / 2].forEach(cx => {
+        ctx.beginPath();
+        ctx.moveTo(cx, winY - 3 * scale);
+        ctx.lineTo(cx, winY + winH + 3 * scale);
+        ctx.stroke();
+      });
 
-      const segCount = Math.ceil(w / segFull) + PATTERN_LEN;
-      const offsetSeg = (phaseRef.current * scale) / segFull;
-
-      const barTop = h * 0.22;
-      const barH = h * 0.56;
-
-      for (let i = -PATTERN_LEN; i < segCount; i++) {
-        const segIndexFloat = i - offsetSeg;
-        const segIndex = Math.floor(segIndexFloat);
-        const mod = (((segIndex % PATTERN_LEN) + PATTERN_LEN) % PATTERN_LEN);
-        const lit = mod < LIT_COUNT;
-        const x = (i) * segFull - ((offsetSeg % 1) * segFull) - segFull;
-
-        if (x > w || x + SEG_W * scale < 0) continue;
-
-        if (lit || !isActive) {
-          ctx.fillStyle = !isActive ? LED_DIM : lit ? litColor : LED_DIM;
-          if (isActive && lit) {
-            ctx.shadowColor = glowColor;
-            ctx.shadowBlur = 8 * scale;
-          } else {
-            ctx.shadowBlur = 0;
-          }
-          ctx.fillRect(x, barTop, SEG_W * scale, barH);
-        } else {
-          ctx.shadowBlur = 0;
-          ctx.fillStyle = LED_DIM;
-          ctx.fillRect(x, barTop, SEG_W * scale, barH);
-        }
-      }
-      ctx.shadowBlur = 0;
-
-      // 정지(lock) 시 상/하단 얇은 강조선
+      // 락 시 좌/우 라인 강조
       if (isActive && locked && cents !== null) {
-        ctx.fillStyle = LED_LOCK;
-        ctx.fillRect(0, 0, w, 2 * scale);
-        ctx.fillRect(0, h - 2 * scale, w, 2 * scale);
+        ctx.fillStyle = "#4ade80";
+        ctx.fillRect(panelX, panelY, panelW, 2 * scale);
+        ctx.fillRect(panelX, panelY + panelH - 2 * scale, panelW, 2 * scale);
       }
+
+      // 유리 반사 (대각선 하이라이트)
+      const glare = ctx.createLinearGradient(panelX, panelY, panelX + panelW * 0.5, panelY + panelH);
+      glare.addColorStop(0, "rgba(255,255,255,0.05)");
+      glare.addColorStop(0.4, "rgba(255,255,255,0.0)");
+      ctx.fillStyle = glare;
+      roundRect(ctx, panelX, panelY, panelW, panelH, 4 * scale);
+      ctx.fill();
 
       rafRef.current = requestAnimationFrame(draw);
     };
@@ -149,14 +210,15 @@ export default function StrobeBar({
 
   const cents = stableCents ?? detectedCents;
   const locked = isActive && cents !== null && Math.abs(cents) <= LOCK_THRESHOLD;
+  const { name: noteName, octave } = splitNote(currentNote);
 
   return (
     <div className="px-4 py-3">
-      <div className="rounded-lg overflow-hidden border border-instrument-muted/40 bg-instrument shadow-inner">
-        {/* 상단 정보 바 */}
-        <div className="flex items-center justify-between px-3 pt-2 pb-1">
-          <span className="text-[10px] font-semibold text-instrument-muted uppercase tracking-wider">
-            Strobe
+      <div className="rounded-xl overflow-hidden border border-black/40 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_4px_10px_rgba(0,0,0,0.35)]">
+        {/* 상단 라벨 바 */}
+        <div className="flex items-center justify-between px-3 pt-2 pb-1 bg-gradient-to-b from-[#2a2a30] to-[#1c1c22]">
+          <span className="text-[10px] font-semibold text-white/40 uppercase tracking-wider">
+            Strobe Scope
           </span>
           <div className="flex items-center gap-2">
             {isCapturing && (
@@ -166,38 +228,44 @@ export default function StrobeBar({
               <span className="text-[10px] font-bold text-in-tune">LOCKED</span>
             )}
             {partial && partial > 1 && analysisFreq && (
-              <span className="text-[10px] text-instrument-muted" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+              <span className="text-[10px] text-white/40" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                 ×{partial} {analysisFreq.toFixed(0)}Hz
               </span>
             )}
           </div>
         </div>
 
-        {/* LED 스트로브 바 캔버스 */}
-        <canvas ref={canvasRef} className="w-full block" style={{ height: 64 }} />
+        {/* LED 스트로브 캔버스 (베젤+유리+2윈도우) */}
+        <canvas ref={canvasRef} className="w-full block" style={{ height: 72 }} />
 
         {/* LCD 스타일 하단 리드아웃 */}
-        <div className="grid grid-cols-3 divide-x divide-instrument-muted/30 border-t border-instrument-muted/30">
-          <div className="px-3 py-1.5 text-center">
-            <div className="text-[9px] text-instrument-muted uppercase tracking-wide">Note</div>
-            <div className="text-sm font-bold text-instrument-foreground" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-              {currentNote ?? "—"}
+        <div
+          className="grid grid-cols-4 border-t-2 border-black/50"
+          style={{ background: "linear-gradient(180deg,#aab8a4,#96a591)" }}
+        >
+          {[
+            { label: "OCT", value: octave },
+            { label: "NOTE", value: noteName },
+            { label: "KEY", value: currentKeyIndex !== null && currentKeyIndex !== undefined ? String(currentKeyIndex + 1) : "—" },
+            { label: "CENT", value: cents !== null ? `${cents > 0 ? "+" : ""}${cents.toFixed(1)}` : "—" },
+          ].map((col, i) => (
+            <div key={col.label} className={cn3("px-2 py-1.5 text-center", i > 0 && "border-l border-black/15")}>
+              <div className="text-[8px] font-bold text-black/45 uppercase tracking-wide">{col.label}</div>
+              <div
+                className={cn3("text-base font-bold leading-tight", locked && col.label === "CENT" ? "text-emerald-800" : "text-black/80")}
+                style={{ fontFamily: "'JetBrains Mono', monospace" }}
+              >
+                {col.value}
+              </div>
             </div>
-          </div>
-          <div className="px-3 py-1.5 text-center">
-            <div className="text-[9px] text-instrument-muted uppercase tracking-wide">Key</div>
-            <div className="text-sm font-bold text-instrument-foreground" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-              {currentKeyIndex !== null && currentKeyIndex !== undefined ? currentKeyIndex + 1 : "—"}
-            </div>
-          </div>
-          <div className="px-3 py-1.5 text-center">
-            <div className="text-[9px] text-instrument-muted uppercase tracking-wide">Cent</div>
-            <div className={`text-sm font-bold ${locked ? "text-in-tune" : "text-instrument-foreground"}`} style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-              {cents !== null ? `${cents > 0 ? "+" : ""}${cents.toFixed(1)}` : "—"}
-            </div>
-          </div>
+          ))}
         </div>
       </div>
     </div>
   );
+}
+
+// 로컬 최소 classnames 헬퍼 (다른 곳 cn과 충돌 방지용 별칭)
+function cn3(...cls: (string | false | undefined)[]) {
+  return cls.filter(Boolean).join(" ");
 }
