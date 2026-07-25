@@ -6,7 +6,7 @@
 
 import { PitchResult } from "@/hooks/usePitchDetector";
 import { cn } from "@/lib/utils";
-import StrobeTuner from "@/components/tuner/StrobeTuner";
+import StrobeBar from "@/components/tuner/StrobeBar";
 
 interface PitchMeterProps {
   pitch: PitchResult | null;
@@ -49,21 +49,52 @@ export default function PitchMeter({ pitch, isListening, autoSave, onSave, onSki
 
   return (
     <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
-      {/* 스트로브 튜너 */}
+      {/* 스트로브 바 (PT-100 스타일) */}
       <div className="mb-3">
-        <StrobeTuner
+        <StrobeBar
           detectedCents={pitch?.cents ?? null}
           stableCents={stableCents ?? null}
           isCapturing={isCapturing ?? false}
           isActive={isListening}
-          onSaveStrobe={onSaveStrobe}
-          stableDuration={stableDuration}
-          onStableDurationChange={onStableDurationChange}
           currentNote={strobeNote ?? null}
           currentKeyIndex={strobeKeyIndex ?? null}
           partial={strobePartial ?? null}
           analysisFreq={strobeAnalysisFreq ?? null}
         />
+
+        {/* 안정 대기 시간 */}
+        {onStableDurationChange && (
+          <div className="px-1 pt-1 pb-1 flex items-center gap-2">
+            <span className="text-xs text-muted-foreground whitespace-nowrap">안정 대기</span>
+            <input type="range" min={500} max={3000} step={100} value={stableDuration}
+              onChange={e => onStableDurationChange(Number(e.target.value))}
+              className="flex-1 accent-primary h-1" />
+            <span className="text-xs text-primary/80 w-10 text-right" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+              {((stableDuration ?? 1200) / 1000).toFixed(1)}s
+            </span>
+          </div>
+        )}
+
+        {/* 안정값 저장 버튼 (확정/LOCKED 값 수동 저장) */}
+        {onSaveStrobe && (
+          <div className="px-1 pt-1">
+            <button
+              onClick={() => onSaveStrobe(stableCents ?? pitch?.cents ?? 0)}
+              disabled={stableCents === null || stableCents === undefined}
+              className={cn(
+                "w-full py-2 rounded-xl text-sm font-bold transition-all active:scale-[0.97]",
+                stableCents !== null && stableCents !== undefined
+                  ? "bg-in-tune hover:bg-in-tune/90 text-white"
+                  : "bg-muted text-muted-foreground/40 cursor-not-allowed"
+              )}
+            >
+              {stableCents !== null && stableCents !== undefined ? "✓ 안정값(LOCKED)으로 저장" : "안정값 대기 중..."}
+              <span className="ml-2 text-xs opacity-70">
+                ({stableCents !== null && stableCents !== undefined ? (stableCents > 0 ? "+" : "") + stableCents.toFixed(1) : "--"}¢)
+              </span>
+            </button>
+          </div>
+        )}
       </div>
       {/* 정확도 모드 토글 */}
       {onFftSizeChange && (
