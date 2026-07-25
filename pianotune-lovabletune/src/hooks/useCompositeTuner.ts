@@ -41,6 +41,7 @@ export interface CompositeResult {
   isCapturing: boolean;
   captureProgress: number;
   zone: "low" | "mid" | "high";
+  partial: number;
 }
 
 export interface UseCompositeTunerReturn {
@@ -49,6 +50,7 @@ export interface UseCompositeTunerReturn {
   startListening: () => Promise<void>;
   stopListening: () => void;
   error: string | null;
+  analyserRef: { readonly current: AnalyserNode | null };
 }
 
 // 교차검증 허용 편차 (파트별)
@@ -349,6 +351,7 @@ export function useCompositeTuner(
           isCapturing,
           captureProgress,
           zone,
+          partial,
         };
 
         setResult(newResult);
@@ -395,5 +398,5 @@ export function useCompositeTuner(
 
   useEffect(() => () => { stopListening(); }, [stopListening]);
 
-  return { isListening, result, startListening, stopListening, error };
+  return { isListening, result, startListening, stopListening, error, analyserRef };
 }

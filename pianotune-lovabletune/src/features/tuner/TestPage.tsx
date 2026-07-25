@@ -1,5 +1,14 @@
 /**
- * TestPage.tsx — 시험용 모드 (수동 스트로브 조율 모드 기반 복제, v1)
+ * TestPage.tsx — 시험용 모드 (v2)
+ *
+ * UI/확정 흐름은 수동모드(스트로브 휠 + 수동 확정)를 유지하되,
+ * 감지엔진 내부는 복합모드(useCompositeTuner)에서 그대로 가져옴:
+ * - 감지엔진: YIN + Goertzel 2단계 스캔 듀얼 엔진
+ * - 버퍼크기: 구간별 동적 (저음 8192 / 중고음 4096)
+ * - 신뢰도검증: YIN ↔ Goertzel 교차검증 (구간별 허용 편차)
+ * - 배음보정: HPS 옥타브 보정 + 동적 배음(partial) 선택
+ *
+ * 자동 확정/자동 진행은 하지 않음 — 엔진이 안정값을 내면 사용자가 직접 확정.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -7,7 +16,7 @@ import { Link } from "@tanstack/react-router";
 import { toast as sonnerToast } from "sonner";
 import { cn } from "@/lib/utils";
 import { PIANO_KEYS } from "@/hooks/usePitchDetector";
-import { useStrobeDetector } from "@/hooks/useStrobeDetector";
+import { useCompositeTuner, CompositeResult } from "@/hooks/useCompositeTuner";
 import { useTuningSession } from "@/hooks/useTuningSession";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useAuth } from "@/hooks/useAuth";
@@ -28,7 +37,33 @@ const toast = Object.assign(
   }
 );
 
-export default function StrobeManualPage() {
+function EngineRow({ label, cents, active, highlight }: {
+  label: string; cents: number | null; active: boolean; highlight?: boolean;
+}) {
+  return (
+    <div className={cn(
+      "flex items-center justify-between px-3 py-1.5 rounded-lg text-xs transition-colors",
+      highlight ? "bg-precision/10 border border-precision/30"
+        : active  ? "bg-muted/60 border border-border"
+        : "bg-muted/30"
+    )}>
+      <span className={cn("font-semibold w-20", highlight ? "text-precision" : "text-muted-foreground")}>
+        {label}
+      </span>
+      <span
+        className={cn(
+          "font-bold tabular-nums w-16 text-right",
+          highlight ? "text-foreground" : active ? "text-foreground/80" : "text-muted-foreground/40"
+        )}
+        style={{ fontFamily: "'JetBrains Mono', monospace" }}
+      >
+        {cents !== null ? `${cents > 0 ? "+" : ""}${cents.toFixed(1)}¢` : "—"}
+      </span>
+    </div>
+  );
+}
+
+export default function TestPage() {
   const { user } = useAuth();
   const { isPro } = useUserRole(user?.id);
 
@@ -43,40 +78,32 @@ export default function StrobeManualPage() {
   const activeSessionIdRef = useRef(activeSessionId);
   useEffect(() => { activeSessionIdRef.current = activeSessionId; }, [activeSessionId]);
 
-  // ── 스트로브 (마이크 자체 관리) ──────────────────────────────────
-  const {
-    liveCents,
-    strobeCents,
-    isCapturing,
-    captureProgress,
-    currentNote,
-    currentKeyIndex: strobeKeyIndex,
-    analysisFreq,
-    partial,
-    isListening,
-    startListening,
-    stopListening,
-    micError,
-    analyserRef,
-  } = useStrobeDetector(seq.targetKeyIndex);
+  // ── pendingCents: 엔진이 안정값(finalCents)을 내면 갱신, 자동저장은 하지 않음 ──
+  const [pendingCents, setPendingCents] = useState<number | null>(null);
+  const [lastEngineMeta, setLastEngineMeta] = useState<CompositeResult | null>(null);
+
+  const handleEngineConfirmed = useCallback((r: CompositeResult) => {
+    if (r.finalCents === null) return;
+    setPendingCents(r.finalCents);
+    setLastEngineMeta(r);
+  }, []);
+
+  // ── 복합 엔진(YIN + Goertzel + 교차검증 + HPS 배음보정) 그대로 사용 ──
+  const { isListening, result, startListening, stopListening, error, analyserRef } =
+    useCompositeTuner(seq.targetKeyIndex, handleEngineConfirmed);
 
   useWakeLock(isListening);
-
-  // ── pendingCents: strobeCents가 올 때마다 갱신 ───────────────────
-  const [pendingCents, setPendingCents] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (strobeCents !== null && isFinite(strobeCents)) {
-      setPendingCents(strobeCents);
-    }
-  }, [strobeCents]);
 
   // 건반 바뀌면 pendingCents 리셋
   useEffect(() => {
     setPendingCents(null);
+    setLastEngineMeta(null);
   }, [seq.targetKeyIndex]);
 
-  const handleReset = useCallback(() => setPendingCents(null), []);
+  const handleReset = useCallback(() => {
+    setPendingCents(null);
+    setLastEngineMeta(null);
+  }, []);
 
   // ── 세션 ─────────────────────────────────────────────────────────
   const [showSessionList, setShowSessionList] = useState(false);
@@ -100,6 +127,7 @@ export default function StrobeManualPage() {
       { duration: 1800 }
     );
     setPendingCents(null);
+    setLastEngineMeta(null);
     seq.next();
   }, [pendingCents, seq, ensureSession, recordMeasurement]);
 
@@ -117,6 +145,16 @@ export default function StrobeManualPage() {
   };
 
   const targetKey = PIANO_KEYS[seq.targetKeyIndex];
+
+  // 표시용 값: 엔진 result에서 그대로 파생
+  const liveCents      = result?.liveCents ?? null;
+  const isCapturing    = result?.isCapturing ?? false;
+  const captureProgress = result?.captureProgress ?? 0;
+  const currentNote     = result ? `${result.noteName}${result.octave}` : null;
+  const currentKeyIndex = result?.keyIndex ?? null;
+  const analysisFreq    = result?.frequency ?? null;
+  const partial         = result?.partial ?? lastEngineMeta?.partial ?? null;
+  const crossValid      = result?.crossValid ?? false;
 
   // cents 색상
   const absC = pendingCents !== null ? Math.abs(pendingCents) : null;
@@ -140,7 +178,7 @@ export default function StrobeManualPage() {
           </div>
           <div>
             <h1 className="text-base font-bold text-foreground leading-tight">시험용</h1>
-            <p className="text-xs text-muted-foreground/80">스트로브 안정 확인 후 수동 확정 (시험용)</p>
+            <p className="text-xs text-muted-foreground/80">복합엔진(YIN+Goertzel·교차검증·HPS 배음보정) + 수동 확정</p>
           </div>
         </div>
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
@@ -191,17 +229,27 @@ export default function StrobeManualPage() {
                 "text-xs font-semibold px-2 py-0.5 rounded-full",
                 isCapturing
                   ? "bg-warn/15 text-warn"
-                  : strobeCents !== null
+                  : pendingCents !== null
                   ? absC !== null && absC <= 2 ? "bg-in-tune/15 text-in-tune" : "bg-primary/10 text-primary"
                   : liveCents !== null
                   ? "bg-warn/15 text-warn"
                   : "bg-muted text-muted-foreground"
               )}>
                 {isCapturing ? "● 수집 중"
-                  : strobeCents !== null ? "● 안정값"
+                  : pendingCents !== null ? "● 안정값"
                   : liveCents !== null ? "● 감지 중"
                   : "대기 중"}
               </span>
+              {/* 신뢰도검증 뱃지 */}
+              {result && (
+                <span className={cn(
+                  "flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full",
+                  crossValid ? "bg-in-tune/15 text-in-tune" : "bg-warn/15 text-warn"
+                )}>
+                  <span className={cn("w-1.5 h-1.5 rounded-full", crossValid ? "bg-in-tune" : "bg-warn")} />
+                  {crossValid ? "교차검증 ✓" : "YIN 단독"}
+                </span>
+              )}
               <span className="text-[10px] text-muted-foreground" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                 {targetKey.noteName}{targetKey.octave} · 건반 {targetKey.keyNumber}
               </span>
@@ -224,14 +272,34 @@ export default function StrobeManualPage() {
           <div className="px-0">
             <StrobeTuner
               detectedCents={liveCents}
-              stableCents={strobeCents}
+              stableCents={pendingCents}
               isCapturing={isCapturing}
               isActive={isListening}
               currentNote={currentNote}
-              currentKeyIndex={strobeKeyIndex}
+              currentKeyIndex={currentKeyIndex}
               analysisFreq={analysisFreq}
               partial={partial}
             />
+          </div>
+
+          {/* 엔진 상세 (YIN / Goertzel / 복합 비교) */}
+          <div className="px-4 py-3 border-t border-border/60">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">엔진 상세</h3>
+              {result && (
+                <span className="text-[10px] text-muted-foreground/80" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                  {result.zone.toUpperCase()} zone
+                </span>
+              )}
+            </div>
+            <div className="space-y-1">
+              <EngineRow label="YIN" cents={result?.yinCents ?? null} active={!!result} />
+              <EngineRow label="Goertzel" cents={result?.goertzelCents ?? null} active={!!result?.signalOk} />
+              <EngineRow label="복합 (확정값)" cents={result?.liveCents ?? null} active={!!result} highlight={crossValid} />
+            </div>
+            {result && !crossValid && (
+              <p className="text-xs text-warn/80 mt-2 px-1">YIN ↔ Goertzel 편차 큼 — Goertzel 단독 사용 중</p>
+            )}
           </div>
 
           {/* 스펙트럼 그래프 */}
@@ -295,9 +363,9 @@ export default function StrobeManualPage() {
           <p className="text-xs text-center text-muted-foreground">Pro 등급으로 변경하면 마이크를 사용할 수 있습니다.</p>
         )}
 
-        {micError && (
+        {error && (
           <div className="px-3 py-2 rounded-lg bg-off/10 border border-off/40 text-xs text-off">
-            {micError}
+            {error}
           </div>
         )}
 
