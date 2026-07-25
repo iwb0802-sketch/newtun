@@ -569,13 +569,6 @@ export default function Home() {
                 <TuningCurveChart data={chartData} activeKeyIndex={displayPitch?.keyIndex ?? null} showStrobeOnly={showStrobeOnly} />
               </div>
 
-              {/* 스펙트럼 그래프 */}
-              <SpectrumGraph
-                analyserRef={analyserRef}
-                targetKeyIndex={currentPitch?.keyIndex ?? null}
-                isActive={isListening}
-              />
-
               {/* 컨트롤 바 */}
               <div className="bg-card border border-border rounded-xl px-4 py-3 flex items-center justify-between shadow-sm flex-wrap gap-2">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -693,6 +686,13 @@ export default function Home() {
                   recordStrobeMeasurement(ki, strobeCents);
                   toast.success(`스트로브 저장: 건반 ${ki + 1} ${strobeCents > 0 ? "+" : ""}${strobeCents.toFixed(1)}¢`);
                 }}
+              />
+
+              {/* 스펙트럼 그래프 (스트로브 아래로 이동) */}
+              <SpectrumGraph
+                analyserRef={analyserRef}
+                targetKeyIndex={currentPitch?.keyIndex ?? null}
+                isActive={isListening}
               />
 
               {/* 측정 현황 */}
