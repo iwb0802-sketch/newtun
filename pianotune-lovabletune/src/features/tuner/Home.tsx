@@ -142,20 +142,40 @@ export default function Home() {
   useWakeLock(isListening);
 
   // ── 스트로브용 슬라이딩 윈도우 (currentPitch 재사용, 마이크 추가 없음) ──
+  // 무음 구간에도 마지막 감지 상태를 유지 — 새 음(다른 건반)이 들어올 때만 리셋
   const STROBE_WINDOW_MS = 300;
   const strobeWindowRef = useRef<Array<{ t: number; c: number; ki: number }>>([]);
   const [stableCents, setStableCents] = useState<number | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
   const [captureProgress, setCaptureProgress] = useState(0);
+  const [lastPitch, setLastPitch] = useState<PitchResult | null>(null);
+  const lastNoteKeyRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!currentPitch || !isListening) {
+    if (!isListening) {
+      // 마이크 자체를 끈 경우에만 전체 초기화
       strobeWindowRef.current = [];
       setStableCents(null);
       setIsCapturing(false);
       setCaptureProgress(0);
+      setLastPitch(null);
+      lastNoteKeyRef.current = null;
       return;
     }
+    if (!currentPitch) {
+      // 무음 구간 — 마지막 감지 상태를 그대로 유지 (초기화하지 않음)
+      return;
+    }
+
+    // 다른 건반(음)이 새로 감지되면 캡처 윈도우 리셋
+    if (lastNoteKeyRef.current !== currentPitch.keyIndex) {
+      lastNoteKeyRef.current = currentPitch.keyIndex;
+      strobeWindowRef.current = [];
+      setStableCents(null);
+    }
+
+    setLastPitch(currentPitch);
+
     const now = Date.now();
     strobeWindowRef.current.push({ t: now, c: currentPitch.cents, ki: currentPitch.keyIndex });
     strobeWindowRef.current = strobeWindowRef.current.filter(s => now - s.t <= STROBE_WINDOW_MS);
@@ -172,10 +192,10 @@ export default function Home() {
     }
   }, [currentPitch, isListening]);
 
-  // strobeNote/KeyIndex/AnalysisFreq — currentPitch에서 직접 파생
-  const strobeNote = currentPitch ? `${currentPitch.noteName}${currentPitch.octave}` : null;
-  const strobeKeyIndex = currentPitch?.keyIndex ?? null;
-  const strobeAnalysisFreq = currentPitch?.frequency ?? null;
+  // strobeNote/KeyIndex/AnalysisFreq — 마지막 감지 상태(lastPitch)에서 파생 (무음에도 유지)
+  const strobeNote = lastPitch ? `${lastPitch.noteName}${lastPitch.octave}` : null;
+  const strobeKeyIndex = lastPitch?.keyIndex ?? null;
+  const strobeAnalysisFreq = lastPitch?.frequency ?? null;
   const strobePartial = 1;
 
   // 스트로브 1회 자동저장 - 안정값 감지 시 자동으로 파란 점에 기록
@@ -257,7 +277,7 @@ export default function Home() {
     setRenamingId(null); setRenameValue("");
   };
 
-  const displayPitch = currentPitch || pendingPitch;
+  const displayPitch = currentPitch || pendingPitch || lastPitch;
   const visibleSession = activeSession ?? {
     id: "draft-session",
     name: "새 조율 세션",
