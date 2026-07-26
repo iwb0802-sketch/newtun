@@ -12,7 +12,7 @@ import { Link } from "@tanstack/react-router";
 import { toast as sonnerToast } from "sonner";
 import { cn } from "@/lib/utils";
 import { PIANO_KEYS, usePitchDetector } from "@/hooks/usePitchDetector";
-import { useStrobeDetector } from "@/hooks/useStrobeDetector";
+import { useCompositeTuner, CompositeResult } from "@/hooks/useCompositeTuner";
 import { useTuningSession } from "@/hooks/useTuningSession";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useAuth } from "@/hooks/useAuth";
@@ -65,21 +65,33 @@ export default function StrobeManualPage() {
   // ── 마이크는 usePitchDetector가 소유 (자동판별용, 자동탭과 동일 엔진) ──
   const pitchDetector = usePitchDetector();
 
-  // ── 스트로브 정밀 엔진 — 같은 analyser 공유 (마이크 중복 오픈 안 함) ──
+  // ── pendingCents: 엔진이 안정값(finalCents)을 내면 handleEngineConfirmed에서 직접 갱신 ──
+  const [pendingCents, setPendingCents] = useState<number | null>(null);
+
+  // ── 스트로브 정밀 엔진 — 복합엔진(YIN+Goertzel+HPS+TWM) + 같은 analyser 공유 ──
+  const [lastEngineMeta, setLastEngineMeta] = useState<CompositeResult | null>(null);
+  const handleEngineConfirmed = useCallback((r: CompositeResult) => {
+    if (r.finalCents === null) return;
+    setPendingCents(r.finalCents);
+    setLastEngineMeta(r);
+  }, []);
+
   const {
-    liveCents,
-    strobeCents,
-    isCapturing,
-    captureProgress,
-    currentNote,
-    currentKeyIndex: strobeKeyIndex,
-    analysisFreq,
-    partial,
-    isListening: strobeLoopActive,
+    result: engineResult,
     startListening: startStrobeLoop,
     stopListening: stopStrobeLoop,
-    micError,
-  } = useStrobeDetector(seq.targetKeyIndex, pitchDetector.analyserRef);
+    error: engineError,
+  } = useCompositeTuner(seq.targetKeyIndex, handleEngineConfirmed, pitchDetector.analyserRef);
+
+  // 실시간 흐름용 — 교차검증 전이라도 즉시 표시 (YIN 우선, 없으면 Goertzel)
+  const liveCents      = engineResult?.yinCents ?? engineResult?.goertzelCents ?? null;
+  const strobeCents    = pendingCents; // 자동 확정된 값 (하위 호환용 별칭)
+  const isCapturing    = engineResult?.isCapturing ?? false;
+  const captureProgress = engineResult?.captureProgress ?? 0;
+  const currentNote     = engineResult ? `${engineResult.noteName}${engineResult.octave}` : null;
+  const strobeKeyIndex  = engineResult?.keyIndex ?? null;
+  const analysisFreq    = engineResult?.frequency ?? null;
+  const partial         = engineResult?.partial ?? lastEngineMeta?.partial ?? null;
 
   const isListening = pitchDetector.isListening;
   useWakeLock(isListening);
@@ -95,15 +107,6 @@ export default function StrobeManualPage() {
     lastAutoKeyRef.current = ki;
     seq.jumpTo(ki);
   }, [autoMode, pitchDetector.currentPitch, seq]);
-
-  // ── pendingCents: strobeCents가 올 때마다 갱신 (항상 원음 대비 raw 값 — 저장용) ──
-  const [pendingCents, setPendingCents] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (strobeCents !== null && isFinite(strobeCents)) {
-      setPendingCents(strobeCents);
-    }
-  }, [strobeCents]);
 
   // ── targetOffset: 영점(null-meter) 방식 ──────────────────────────
   // 건반 치면 화면엔 0이 뜨고, 실제로는 스트로브가 원시 오차만큼 빠르게 흐름.
@@ -326,9 +329,9 @@ export default function StrobeManualPage() {
           <p className="text-xs text-center text-muted-foreground">Pro 등급으로 변경하면 마이크를 사용할 수 있습니다.</p>
         )}
 
-        {(micError || pitchDetector.error) && (
+        {(engineError || pitchDetector.error) && (
           <div className="px-3 py-2 rounded-lg bg-off/10 border border-off/40 text-xs text-off">
-            {micError || pitchDetector.error}
+            {engineError || pitchDetector.error}
           </div>
         )}
 

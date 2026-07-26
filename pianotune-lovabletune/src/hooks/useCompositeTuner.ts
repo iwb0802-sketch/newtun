@@ -22,6 +22,7 @@ import {
   selectBestPartial,
   targetPartial,
   correctOctaveByHPS,
+  refineByTWM,
   getRMS,
   median,
   stddev,
@@ -94,6 +95,7 @@ function weightedCents(
 export function useCompositeTuner(
   targetKeyIndex: number,
   onConfirmed?: (result: CompositeResult) => void,
+  externalAnalyserRef?: { readonly current: AnalyserNode | null },
 ): UseCompositeTunerReturn {
   const [isListening, setIsListening] = useState(false);
   const [result, setResult]           = useState<CompositeResult | null>(null);
@@ -139,18 +141,162 @@ export function useCompositeTuner(
   const stopListening = useCallback(() => {
     isRunningRef.current = false;
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    streamRef.current = analyserRef.current = timeBufRef.current = freqBufRef.current = null;
-    ctxRef.current?.close().catch(() => {});
-    ctxRef.current = null;
+    if (!externalAnalyserRef) {
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = analyserRef.current = null;
+      ctxRef.current?.close().catch(() => {});
+      ctxRef.current = null;
+    }
+    timeBufRef.current = freqBufRef.current = null;
     resetCapture();
     setIsListening(false);
     setResult(null);
-  }, [resetCapture]);
+  }, [resetCapture, externalAnalyserRef]);
 
   const startListening = useCallback(async () => {
     try {
       setError(null);
+
+      // ── 외부 analyser 공유 모드 (마이크를 다른 훅이 이미 열고 있음, 예: 수동탭 AUTO) ──
+      if (externalAnalyserRef) {
+        isRunningRef.current = true;
+        setIsListening(true);
+
+        const detectExternal = () => {
+          if (!isRunningRef.current) return;
+          const analyser = externalAnalyserRef.current;
+          if (!analyser || !analyser.context) {
+            rafRef.current = requestAnimationFrame(detectExternal);
+            return;
+          }
+          if (analyser.context.state === "suspended") analyser.context.resume().catch(() => {});
+
+          const ki   = targetKeyRef.current;
+          const zone = getZone(ki);
+          const size = analyser.fftSize; // 외부 소유 — 리사이즈하지 않고 그대로 사용
+
+          if (!timeBufRef.current || timeBufRef.current.length !== size) {
+            timeBufRef.current = new Float32Array(size);
+            freqBufRef.current = new Float32Array(analyser.frequencyBinCount);
+          }
+          const timeBuf = timeBufRef.current!;
+          const freqBuf = freqBufRef.current!;
+
+          analyser.getFloatTimeDomainData(timeBuf as Float32Array<ArrayBuffer>);
+          analyser.getFloatFrequencyData(freqBuf as Float32Array<ArrayBuffer>);
+
+          const rms      = getRMS(timeBuf);
+          const stabConf = getStabilityConfig(zone);
+          const sr       = analyser.context.sampleRate;
+
+          if (rms < stabConf.peakThreshold * 0.3) {
+            resetCapture();
+            setResult(null);
+            rafRef.current = requestAnimationFrame(detectExternal);
+            return;
+          }
+
+          const key      = PIANO_KEYS[ki];
+          const baseFreq = key.freq;
+
+          // 1. YIN + HPS 배음보정 + TWM 정밀화
+          const yinParams = getYINParams(zone, rms);
+          const winBuf    = applyHannWindow(timeBuf);
+          const fYinRaw   = detectPitchYIN(winBuf, sr, yinParams);
+          const fHps = fYinRaw > 0 ? correctOctaveByHPS(fYinRaw, freqBuf, sr, size, ki) : fYinRaw;
+          let fFinal = fHps;
+          if (fHps > 0 && zone !== "high") {
+            const twm = refineByTWM(freqBuf, sr, size, fHps, zone);
+            if (twm && twm.error < 15) fFinal = twm.f0;
+          }
+          const yinCents = fFinal > 0 ? yinToCents(fFinal, baseFreq, zone) : null;
+
+          // 2. Goertzel 2단계 스캔
+          const partial    = zone === "low" ? selectBestPartial(timeBuf, sr, ki, baseFreq) : targetPartial(ki);
+          const targetFreq = baseFreq * partial;
+          const gTarget = goertzel(timeBuf, sr, targetFreq);
+          const magLo   = goertzel(timeBuf, sr, targetFreq * Math.pow(2, -1.5 / 12)).magnitude;
+          const magHi   = goertzel(timeBuf, sr, targetFreq * Math.pow(2,  1.5 / 12)).magnitude;
+          const domThresh = zone === "high" ? 1.05 : zone === "low" ? 1.15 : 1.3;
+          const signalOk  = gTarget.magnitude > Math.max(magLo, magHi, 1e-9) * domThresh;
+          const scanResult    = goertzelTwoPassScan(timeBuf, sr, targetFreq, baseFreq, partial, zone);
+          const goertzelCents = scanResult.centsOffset;
+
+          // 3. 교차검증 & liveCents
+          const crossThresh = CROSS_THRESH[zone];
+          let crossValid: boolean;
+          if (zone === "high") {
+            crossValid = signalOk || yinCents !== null;
+          } else {
+            crossValid = signalOk && yinCents !== null && Math.abs(yinCents - goertzelCents) <= crossThresh;
+          }
+          const liveCents = weightedCents(yinCents, goertzelCents, zone, crossValid);
+
+          // 4. 안정화 판정 (RMS decay + 표준편차)
+          if (rms > peakRmsRef.current * 1.5 && rms > 0.02) {
+            peakRmsRef.current = rms;
+            captureStartRef.current = null;
+            captureBufferRef.current = [];
+            confirmedRef.current = false;
+          } else if (rms > peakRmsRef.current) {
+            peakRmsRef.current = rms;
+          }
+
+          const isDecaying = rms < peakRmsRef.current * stabConf.peakRatio && peakRmsRef.current > stabConf.peakThreshold;
+
+          let finalCents: number | null = null;
+          let isCapturing = false;
+          let captureProgress = 0;
+
+          if (isDecaying && !confirmedRef.current) {
+            if (captureStartRef.current === null) {
+              captureStartRef.current = Date.now();
+              captureBufferRef.current = [];
+            }
+            captureBufferRef.current.push(liveCents);
+            const elapsed = Date.now() - captureStartRef.current;
+            isCapturing = true;
+            captureProgress = Math.min(elapsed / stabConf.durationMs, 1);
+            const sd = stddev(captureBufferRef.current);
+            const isStable = sd <= stabConf.maxStddev;
+
+            if (elapsed >= stabConf.durationMs && captureBufferRef.current.length >= stabConf.minSamples && isStable) {
+              finalCents = Math.round(median(captureBufferRef.current) * 10) / 10;
+              confirmedRef.current = true;
+              captureStartRef.current = null;
+              captureBufferRef.current = [];
+              peakRmsRef.current = 0;
+            }
+          } else if (!isDecaying) {
+            captureStartRef.current = null;
+            captureBufferRef.current = [];
+          }
+
+          const newResult: CompositeResult = {
+            keyIndex: ki,
+            noteName: key.noteName,
+            octave: key.octave,
+            frequency: scanResult.bestFreq / partial,
+            yinCents,
+            goertzelCents,
+            liveCents,
+            finalCents,
+            crossValid,
+            signalOk,
+            isCapturing,
+            captureProgress,
+            zone,
+            partial,
+          };
+
+          setResult(newResult);
+          if (finalCents !== null) onConfirmed?.(newResult);
+
+          rafRef.current = requestAnimationFrame(detectExternal);
+        };
+        rafRef.current = requestAnimationFrame(detectExternal);
+        return;
+      }
 
       // 마이크 스트림 획득 (DSP 처리 없이 raw 신호)
       let stream: MediaStream;
@@ -240,8 +386,15 @@ export function useCompositeTuner(
           ? correctOctaveByHPS(fYinRaw, freqBuf, sr, analyser.fftSize, ki)
           : fYinRaw;
 
-        const yinCents = fYinCorrected > 0
-          ? yinToCents(fYinCorrected, baseFreq, zone)
+        // TWM(Two-Way Mismatch) 정밀화 — f0+인하모니시티 동시 재추정 (고음 제외)
+        let fFinal = fYinCorrected;
+        if (fYinCorrected > 0 && zone !== "high") {
+          const twm = refineByTWM(freqBuf, sr, analyser.fftSize, fYinCorrected, zone);
+          if (twm && twm.error < 15) fFinal = twm.f0;
+        }
+
+        const yinCents = fFinal > 0
+          ? yinToCents(fFinal, baseFreq, zone)
           : null;
 
         // ────────────────────────────────────────────────────────────
@@ -375,8 +528,9 @@ export function useCompositeTuner(
     }
   }, [onConfirmed, resetCapture]);
 
-  // 화면 복귀 시 오디오 컨텍스트 복구
+  // 화면 복귀 시 오디오 컨텍스트 복구 (자체 마이크 모드에서만 — 외부 analyser는 소유자가 관리)
   useEffect(() => {
+    if (externalAnalyserRef) return;
     const handler = async () => {
       if (document.visibilityState !== "visible" || !isRunningRef.current) return;
       const ctx = ctxRef.current;
@@ -394,7 +548,7 @@ export function useCompositeTuner(
     };
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
-  }, [startListening, resetCapture]);
+  }, [startListening, resetCapture, externalAnalyserRef]);
 
   useEffect(() => () => { stopListening(); }, [stopListening]);
 
