@@ -96,7 +96,7 @@ export default function StrobeManualPage() {
     seq.jumpTo(ki);
   }, [autoMode, pitchDetector.currentPitch, seq]);
 
-  // ── pendingCents: strobeCents가 올 때마다 갱신 ───────────────────
+  // ── pendingCents: strobeCents가 올 때마다 갱신 (항상 원음 대비 raw 값 — 저장용) ──
   const [pendingCents, setPendingCents] = useState<number | null>(null);
 
   useEffect(() => {
@@ -105,16 +105,32 @@ export default function StrobeManualPage() {
     }
   }, [strobeCents]);
 
-  // 건반 바뀌면 pendingCents 리셋
+  // ── targetOffset: 영점(null-meter) 방식 ──────────────────────────
+  // 건반 치면 화면엔 0이 뜨고, 실제로는 스트로브가 원시 오차만큼 빠르게 흐름.
+  // +/-, -10/+10으로 오프셋을 눌러서 스트로브가 멈추는 지점 = 그 음의 실제 cents.
+  // 저장되는 값(pendingCents)은 원음 raw 그대로 — 화면 표시만 분리.
+  const [targetOffset, setTargetOffset] = useState(0);
+
+  // 건반 바뀌면 pendingCents + targetOffset 리셋
   useEffect(() => {
     setPendingCents(null);
+    setTargetOffset(0);
   }, [seq.targetKeyIndex]);
 
-  const handleReset = useCallback(() => setPendingCents(null), []);
+  const handleReset = useCallback(() => {
+    setPendingCents(null);
+    setTargetOffset(0);
+  }, []);
 
   const handleNudge = useCallback((delta: number) => {
-    setPendingCents(prev => (prev !== null ? Math.round((prev + delta) * 10) / 10 : prev));
+    setTargetOffset(prev => Math.round((prev + delta) * 10) / 10);
   }, []);
+
+  // 스트로브를 움직이는 값 = 원시 오차 - 오프셋 (0에 가까워질수록 스트로브 정지)
+  const strobeDriverCents = liveCents !== null ? Math.round((liveCents - targetOffset) * 10) / 10 : null;
+  const strobeLocked = strobeDriverCents !== null && Math.abs(strobeDriverCents) <= 1.5;
+  // 화면/LCD에 표시되는 숫자 = 내가 눌러서 맞춘 오프셋값 (원시값 아님)
+  const displayReadout = targetOffset;
 
   const handleJumpToNote = useCallback((letter: string, octave: number, shift: number) => {
     const ki = noteToKeyIndex(letter, octave, shift);
@@ -165,11 +181,11 @@ export default function StrobeManualPage() {
 
   const targetKey = PIANO_KEYS[seq.targetKeyIndex];
 
-  // cents 색상
-  const absC = pendingCents !== null ? Math.abs(pendingCents) : null;
+  // cents 색상 — 남은 오차(strobeDriverCents)가 얼마나 0에 가까운지로 판단
+  const absC = strobeDriverCents !== null ? Math.abs(strobeDriverCents) : null;
   const centsColor = absC === null
     ? "text-muted-foreground/30"
-    : absC <= 2 ? "text-in-tune"
+    : strobeLocked ? "text-in-tune"
     : absC <= 8 ? "text-warn"
     : "text-off";
 
@@ -203,8 +219,9 @@ export default function StrobeManualPage() {
         {/* ── PT-100 스트로브 + 키패드 (하나의 기기 패널로 통합) ── */}
         <div className="rounded-2xl overflow-hidden border border-black/60 shadow-lg">
           <PTStrobePanel
-            detectedCents={liveCents}
-            stableCents={pendingCents}
+            detectedCents={strobeDriverCents}
+            stableCents={null}
+            readoutCents={displayReadout}
             isActive={isListening}
             noteName={targetKey.noteName}
             octave={targetKey.octave}
@@ -221,38 +238,39 @@ export default function StrobeManualPage() {
           />
         </div>
 
-        {/* ── 확정 패널 (큰 숫자 + 상태 + 확정/리셋) ── */}
+        {/* ── 확정 패널 (큰 숫자 = 내가 맞춘 오프셋 + 상태 + 확정/리셋) ── */}
         <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
-          <div className="px-5 pt-4 pb-2 flex items-end justify-between">
+          <div className="px-5 pt-3 flex items-center gap-1.5">
+            <span className="text-[10px] text-muted-foreground/70">
+              +/-, -10/+10으로 스트로브가 멈추는 지점을 찾으세요 — 그때 이 숫자가 실제 편차입니다
+            </span>
+          </div>
+          <div className="px-5 pt-2 pb-2 flex items-end justify-between">
             <div>
               <span
                 className={cn("text-5xl font-black tabular-nums transition-colors duration-100", centsColor)}
                 style={{ fontFamily: "'JetBrains Mono', monospace" }}
               >
-                {pendingCents !== null
-                  ? `${pendingCents > 0 ? "+" : ""}${pendingCents.toFixed(1)}`
-                  : liveCents !== null
-                  ? `${liveCents > 0 ? "+" : ""}${liveCents.toFixed(1)}`
-                  : "—"}
+                {`${displayReadout > 0 ? "+" : ""}${displayReadout.toFixed(1)}`}
               </span>
               <span className="text-lg text-muted-foreground ml-1">¢</span>
             </div>
             <div className="flex flex-col items-end gap-1">
               <span className={cn(
                 "text-xs font-semibold px-2 py-0.5 rounded-full",
-                isCapturing
-                  ? "bg-warn/15 text-warn"
-                  : strobeCents !== null
-                  ? absC !== null && absC <= 2 ? "bg-in-tune/15 text-in-tune" : "bg-primary/10 text-primary"
+                strobeLocked
+                  ? "bg-in-tune/15 text-in-tune"
                   : liveCents !== null
                   ? "bg-warn/15 text-warn"
                   : "bg-muted text-muted-foreground"
               )}>
-                {isCapturing ? "● 수집 중"
-                  : strobeCents !== null ? "● 안정값"
-                  : liveCents !== null ? "● 감지 중"
+                {strobeLocked ? "● LOCKED (정지)"
+                  : liveCents !== null ? "● 스트로브 흐르는 중"
                   : "대기 중"}
               </span>
+              {strobeCents !== null && (
+                <span className="text-[10px] text-muted-foreground/70">자동측정: {strobeCents > 0 ? "+" : ""}{strobeCents.toFixed(1)}¢</span>
+              )}
               {autoMode && (
                 <span className="text-[10px] font-bold text-in-tune bg-in-tune/10 px-1.5 py-0.5 rounded-full">AUTO 추적 중</span>
               )}

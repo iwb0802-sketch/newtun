@@ -16,6 +16,8 @@ interface PTStrobePanelProps {
   keyNumber: number | null;  // 1~88
   curveLabel?: string;       // "FLAT" 등
   pitchA4?: number;          // 440
+  /** LCD의 CENT 칸에 표시할 값 (영점 방식용) — 없으면 detectedCents/stableCents 사용 */
+  readoutCents?: number | null;
 }
 
 const LOCK_THRESHOLD = 1.5;
@@ -28,6 +30,7 @@ const SPEED_PX_PER_CENT = 2.4;
 export default function PTStrobePanel({
   detectedCents, stableCents, isActive,
   noteName, octave, keyNumber, curveLabel = "FLAT", pitchA4 = 440,
+  readoutCents,
 }: PTStrobePanelProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const phaseRef = useRef(0);
@@ -109,13 +112,17 @@ export default function PTStrobePanel({
     };
   }, [isActive]);
 
-  const cents = stableCents ?? detectedCents;
-  const locked = isActive && cents !== null && Math.abs(cents) <= LOCK_THRESHOLD;
+  // 스트로브 정지 판정용 (내부 애니메이션은 detectedCents/stableCents로 계속 구동)
+  const strobeCentsForLock = stableCents ?? detectedCents;
+  const locked = isActive && strobeCentsForLock !== null && Math.abs(strobeCentsForLock) <= LOCK_THRESHOLD;
+
+  // LCD CENT 칸: readoutCents가 주어지면 그걸 우선 표시 (영점 방식용, 내가 맞춘 오프셋값)
+  const centDisplay = readoutCents !== undefined ? readoutCents : strobeCentsForLock;
 
   const cols = [
     { label: "OCT-NOTE", value: noteName && octave !== null ? `${octave}-${noteName}` : "--" },
     { label: "KEY No.", value: keyNumber !== null ? String(keyNumber) : "--" },
-    { label: "CENT", value: cents !== null ? String(Math.round(cents)).padStart(3, "0").replace("-0", "-") : "000" },
+    { label: "CENT", value: centDisplay !== null ? (centDisplay > 0 ? "+" : "") + String(Math.round(centDisplay)).padStart(centDisplay < 0 ? 3 : 2, "0") : "000" },
     { label: "CURVE", value: curveLabel },
     { label: "PITCH", value: String(pitchA4) },
   ];
