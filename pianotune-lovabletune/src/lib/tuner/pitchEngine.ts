@@ -416,3 +416,118 @@ export function centsFromPhaseDelta(
   if (actual <= 0) return 0;
   return 1200 * Math.log2(actual / targetFreq);
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// ─── TWM (Two-Way Mismatch) — 인하모니시티 반영 f0+B 동시 추정 ───────
+// Maher & Beauchamp (1994) 방식의 단순화 구현.
+// 피아노 현의 강성 때문에 배음이 fn = n·f0·√(1+B·n²) 로 늘어나는 걸
+// 후보(f0, B) 그리드서치로 동시에 찾아냄 → YIN 사후보정보다 원리적으로 정확.
+// ─────────────────────────────────────────────────────────────────────
+
+interface SpectralPeak { freq: number; mag: number; }
+
+// dB 스펙트럼에서 로컬 피크 추출 (파라볼릭 보간으로 서브빈 정밀도 확보)
+function extractPeaks(
+  spectrumDb: Float32Array,
+  sr: number,
+  fftSize: number,
+  fMin: number,
+  fMax: number,
+  maxPeaks = 12
+): SpectralPeak[] {
+  const binHz = sr / fftSize;
+  const binMin = Math.max(1, Math.floor(fMin / binHz));
+  const binMax = Math.min(spectrumDb.length - 2, Math.ceil(fMax / binHz));
+  const peaks: SpectralPeak[] = [];
+
+  for (let i = binMin; i <= binMax; i++) {
+    const c = spectrumDb[i];
+    if (c < -85) continue;
+    if (c > spectrumDb[i - 1] && c >= spectrumDb[i + 1]) {
+      const l = spectrumDb[i - 1], r = spectrumDb[i + 1];
+      const denom = l - 2 * c + r;
+      const delta = denom !== 0 ? 0.5 * (l - r) / denom : 0;
+      const freq = (i + delta) * binHz;
+      const mag = Math.pow(10, c / 20);
+      peaks.push({ freq, mag });
+    }
+  }
+  peaks.sort((a, b) => b.mag - a.mag);
+  return peaks.slice(0, maxPeaks);
+}
+
+// 후보 (f0, B)에 대한 양방향 불일치 오차 (cents 단위, 진폭 가중)
+function twmError(peaks: SpectralPeak[], f0: number, B: number, numPartials: number): number {
+  const maxMag = peaks.reduce((m, p) => Math.max(m, p.mag), 1e-9);
+  const predicted: number[] = [];
+  for (let n = 1; n <= numPartials; n++) {
+    predicted.push(n * f0 * Math.sqrt(1 + B * n * n));
+  }
+  const pMax = predicted[predicted.length - 1] * 1.5;
+
+  // 예측 → 최근접 측정 피크
+  let err1 = 0;
+  for (const pf of predicted) {
+    let best = Infinity;
+    for (const pk of peaks) {
+      const d = Math.abs(pk.freq - pf);
+      if (d < best) best = d;
+    }
+    err1 += Math.abs(1200 * Math.log2(Math.max(pf + best, 1) / pf));
+  }
+  err1 /= predicted.length;
+
+  // 측정 → 최근접 예측 배음 (진폭 가중)
+  let err2 = 0, wsum = 0;
+  for (const pk of peaks) {
+    if (pk.freq > pMax) continue;
+    let best = Infinity, bestPf = pk.freq;
+    for (const pf of predicted) {
+      const d = Math.abs(pk.freq - pf);
+      if (d < best) { best = d; bestPf = pf; }
+    }
+    const w = pk.mag / maxMag;
+    err2 += Math.abs(1200 * Math.log2(Math.max(pk.freq, 1) / Math.max(bestPf, 1))) * w;
+    wsum += w;
+  }
+  if (wsum > 0) err2 /= wsum;
+
+  return err1 + err2;
+}
+
+export interface TWMResult { f0: number; B: number; error: number; }
+
+/**
+ * f0Guess(YIN+HPS 보정 이후 값) 근방 ±40¢, B는 구간별 범위에서
+ * 그리드서치로 (f0, B) 동시 추정. 배음이 2개 미만이면 무의미하므로 null.
+ */
+export function refineByTWM(
+  spectrumDb: Float32Array,
+  sr: number,
+  fftSize: number,
+  f0Guess: number,
+  zone: Zone
+): TWMResult | null {
+  if (f0Guess <= 0) return null;
+
+  const numPartials = zone === "low" ? 8 : zone === "mid" ? 6 : 4;
+  const bMax = zone === "low" ? 0.0020 : zone === "mid" ? 0.0006 : 0.0002;
+  const bSteps = 6;
+  const centsRange = 40;
+  const f0Steps = 8;
+
+  const peaks = extractPeaks(spectrumDb, sr, fftSize, f0Guess * 0.5, f0Guess * numPartials * 1.6);
+  if (peaks.length < 2) return null;
+
+  let bestF0 = f0Guess, bestB = 0, bestErr = Infinity;
+  for (let bi = 0; bi <= bSteps; bi++) {
+    const B = (bi / bSteps) * bMax;
+    for (let fi = -f0Steps; fi <= f0Steps; fi++) {
+      const f0 = f0Guess * Math.pow(2, (fi * (centsRange / f0Steps)) / 1200);
+      const err = twmError(peaks, f0, B, numPartials);
+      if (err < bestErr) { bestErr = err; bestF0 = f0; bestB = B; }
+    }
+  }
+
+  return { f0: bestF0, B: bestB, error: bestErr };
+}

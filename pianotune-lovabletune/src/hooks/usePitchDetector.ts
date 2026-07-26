@@ -1,9 +1,11 @@
 /**
- * usePitchDetector.ts (v4 — 시험용/복합 엔진 요소 일부 이식)
+ * usePitchDetector.ts (v5 — TWM 정밀화 파일럿 추가)
  *
  * - useStrobeDetector의 검증된 마이크/AudioContext 패턴 그대로 사용
  * - 전 건반 YIN 감지 → freqToCentOffset으로 keyIndex 자동 추출
  * - HPS 배음보정: YIN 1차 후보 건반 기준으로 옥타브 오인식 보정 (저/중음)
+ * - TWM(Two-Way Mismatch) 정밀화: HPS 보정된 f0 근방에서 인하모니시티(B)까지
+ *   동시 추정해 최종 미세보정 (저/중음, 실험적 파일럿)
  * - Goertzel 도미넌스 검증: 확정 직전 후보 건반 주파수가 실제로 우세한지 재확인
  * - 슬라이딩 윈도우 다수결(WINDOW=8, MIN_MATCH=4) + 표준편차 체크로 확정
  * - return shape 기존 유지 (Home.tsx, PrecisionPage.tsx 호환)
@@ -12,7 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   detectPitchYIN, getRMS, median, stddev,
-  correctOctaveByHPS, goertzel, getZone, getStabilityConfig,
+  correctOctaveByHPS, goertzel, getZone, getStabilityConfig, refineByTWM,
 } from "@/lib/tuner/pitchEngine";
 
 // ── 88건반 정의 (export: useStrobeDetector에서 import) ──────────────
@@ -132,8 +134,17 @@ export function usePitchDetector(
         if (rough) {
           // HPS 배음보정 — 저/중음에서 배음을 기음으로 오인식하는 경우 보정
           // (correctOctaveByHPS는 keyIndex>=52면 그대로 반환)
-          const fCorrected = correctOctaveByHPS(fRaw, activeFreqBuf, sampleRate, analyser.fftSize, rough.keyIndex);
-          const r = fCorrected !== fRaw ? (freqToCentOffset(fCorrected) ?? rough) : rough;
+          const fHps = correctOctaveByHPS(fRaw, activeFreqBuf, sampleRate, analyser.fftSize, rough.keyIndex);
+
+          // TWM 정밀화 파일럿 — 저/중음에서 f0+인하모니시티(B) 동시 재추정
+          // 실패(배음 부족 등)하면 HPS 보정값을 그대로 사용 (안전 폴백)
+          let fFinal = fHps;
+          if (rough.keyIndex < 52) {
+            const twm = refineByTWM(activeFreqBuf, sampleRate, analyser.fftSize, fHps, getZone(rough.keyIndex));
+            if (twm && twm.error < 15) fFinal = twm.f0; // 오차 15¢ 넘으면 신뢰 안 함
+          }
+
+          const r = fFinal !== fRaw ? (freqToCentOffset(fFinal) ?? rough) : rough;
 
           recentKeys.current.push(r.keyIndex);
           recentCents.current.push(r.cents);
@@ -170,7 +181,7 @@ export function usePitchDetector(
               const stableCents = Math.round(median(centsArr) * 10) / 10;
 
               const result: PitchResult = {
-                frequency:  fCorrected,
+                frequency:  fFinal,
                 keyIndex:   stableKi,
                 noteName:   PIANO_KEYS[stableKi].noteName,
                 octave:     PIANO_KEYS[stableKi].octave,
