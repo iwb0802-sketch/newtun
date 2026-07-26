@@ -13,6 +13,7 @@ import { toast as sonnerToast } from "sonner";
 import { cn } from "@/lib/utils";
 import { PIANO_KEYS, usePitchDetector } from "@/hooks/usePitchDetector";
 import { useCompositeTuner, CompositeResult } from "@/hooks/useCompositeTuner";
+import { median } from "@/lib/tuner/pitchEngine";
 import { useTuningSession } from "@/hooks/useTuningSession";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useAuth } from "@/hooks/useAuth";
@@ -84,7 +85,7 @@ export default function StrobeManualPage() {
   } = useCompositeTuner(seq.targetKeyIndex, handleEngineConfirmed, pitchDetector.analyserRef);
 
   // 실시간 흐름용 — 교차검증 전이라도 즉시 표시 (YIN 우선, 없으면 Goertzel)
-  const liveCents      = engineResult?.yinCents ?? engineResult?.goertzelCents ?? null;
+  const liveCentsRaw   = engineResult?.yinCents ?? engineResult?.goertzelCents ?? null;
   const strobeCents    = pendingCents; // 자동 확정된 값 (하위 호환용 별칭)
   const isCapturing    = engineResult?.isCapturing ?? false;
   const captureProgress = engineResult?.captureProgress ?? 0;
@@ -95,6 +96,25 @@ export default function StrobeManualPage() {
 
   const isListening = pitchDetector.isListening;
   useWakeLock(isListening);
+
+  // ── 스무딩: 복합엔진은 프레임마다 값이 흔들려서 영점(null-meter)이 절대 안 멈춤 ──
+  // 200ms 슬라이딩 윈도우 중앙값으로 스트로브 구동값을 안정화 (기존 useStrobeDetector와 동일 원리)
+  const SMOOTH_WINDOW_MS = 200;
+  const smoothWindowRef = useRef<Array<{ t: number; c: number }>>([]);
+  const [liveCents, setLiveCents] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (liveCentsRaw === null || !isListening) {
+      smoothWindowRef.current = [];
+      setLiveCents(null);
+      return;
+    }
+    const now = Date.now();
+    smoothWindowRef.current.push({ t: now, c: liveCentsRaw });
+    smoothWindowRef.current = smoothWindowRef.current.filter(s => now - s.t <= SMOOTH_WINDOW_MS);
+    const med = Math.round(median(smoothWindowRef.current.map(s => s.c)) * 10) / 10;
+    if (isFinite(med)) setLiveCents(med);
+  }, [liveCentsRaw, isListening]);
 
   // ── AUTO 모드: 현재 연주 중인 음을 자동 추적해서 targetKeyIndex 갱신 ──
   const [autoMode, setAutoMode] = useState(false);
@@ -114,10 +134,12 @@ export default function StrobeManualPage() {
   // 저장되는 값(pendingCents)은 원음 raw 그대로 — 화면 표시만 분리.
   const [targetOffset, setTargetOffset] = useState(0);
 
-  // 건반 바뀌면 pendingCents + targetOffset 리셋
+  // 건반 바뀌면 pendingCents + targetOffset + 스무딩 윈도우 리셋
   useEffect(() => {
     setPendingCents(null);
     setTargetOffset(0);
+    smoothWindowRef.current = [];
+    setLiveCents(null);
   }, [seq.targetKeyIndex]);
 
   const handleReset = useCallback(() => {
