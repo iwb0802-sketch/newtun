@@ -14,7 +14,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   detectPitchYIN, getRMS, median,
-  correctOctaveByHPS,
 } from "@/lib/tuner/pitchEngine";
 
 // ── 88건반 정의 (export: useStrobeDetector에서 import) ──────────────
@@ -132,15 +131,10 @@ export function usePitchDetector(
         // 1차 후보 (YIN 원시값)
         const rough = freqToCentOffset(fRaw);
         if (rough) {
-          // HPS 배음보정 — 저/중음에서 배음을 기음으로 오인식하는 경우 보정
-          // (correctOctaveByHPS는 keyIndex>=52면 그대로 반환)
-          const fHps = correctOctaveByHPS(fRaw, activeFreqBuf, sampleRate, analyser.fftSize, rough.keyIndex);
-
-          // TWM 정밀화는 저음에서 + 방향으로 치우치는 편향이 확인되어 자동탭에서는 비활성화
-          // (HPS 보정까지만 사용, 필요시 재검증 후 재활성화)
-          const fFinal = fHps;
-
-          const r = fFinal !== fRaw ? (freqToCentOffset(fFinal) ?? rough) : rough;
+          // HPS 배음보정 비활성화 — 저음에서 2배음이 기본음보다 강할 때 옥타브를
+          // 잘못 판단해 부호가 반대로 뒤집히는 문제(-12¢가 +12¢로 표시)가 확인되어
+          // 순수 YIN 값을 그대로 사용하도록 롤백 (기존 v3 동작과 동일)
+          const r = rough;
 
           recentKeys.current.push(r.keyIndex);
           recentCents.current.push(r.cents);
@@ -164,7 +158,7 @@ export function usePitchDetector(
             const stableCents = Math.round(median(centsArr) * 10) / 10;
 
             const result: PitchResult = {
-              frequency:  fFinal,
+              frequency:  fRaw,
               keyIndex:   stableKi,
               noteName:   PIANO_KEYS[stableKi].noteName,
               octave:     PIANO_KEYS[stableKi].octave,
