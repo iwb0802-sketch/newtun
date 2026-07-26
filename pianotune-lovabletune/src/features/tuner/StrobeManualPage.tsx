@@ -158,7 +158,7 @@ export default function StrobeManualPage() {
 
   // 스트로브를 움직이는 값 = 원시 오차 - 오프셋 (0에 가까워질수록 스트로브 정지)
   const strobeDriverCents = liveCents !== null ? Math.round((liveCents - targetOffset) * 10) / 10 : null;
-  const strobeLocked = strobeDriverCents !== null && Math.abs(strobeDriverCents) <= 1.5;
+  const strobeLocked = strobeDriverCents !== null && Math.abs(strobeDriverCents) <= 0.5; // 반올림해서 0일 때만 LOCKED
   // 화면/LCD에 표시되는 숫자 = 내가 눌러서 맞춘 오프셋값 (원시값 아님)
   const displayReadout = targetOffset;
 

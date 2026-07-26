@@ -20,7 +20,7 @@ interface PTStrobePanelProps {
   readoutCents?: number | null;
 }
 
-const LOCK_THRESHOLD = 1.5;
+const LOCK_THRESHOLD = 0.5; // 반올림해서 0으로 보일 때만 LOCKED(초록)
 const SEG_W = 3;
 const SEG_GAP = 2;
 const PATTERN_LEN = 5;
