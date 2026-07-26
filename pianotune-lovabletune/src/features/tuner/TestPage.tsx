@@ -182,7 +182,6 @@ export default function TestPage() {
           </div>
           <div>
             <h1 className="text-base font-bold text-foreground leading-tight">시험용</h1>
-            <p className="text-xs text-muted-foreground/80">복합엔진(YIN+Goertzel·교차검증·HPS 배음보정) + 수동 확정</p>
           </div>
         </div>
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
