@@ -13,8 +13,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  detectPitchYIN, getRMS, median, stddev,
-  correctOctaveByHPS, goertzel, getZone, getStabilityConfig, refineByTWM,
+  detectPitchYIN, getRMS, median,
+  correctOctaveByHPS, getZone, refineByTWM,
 } from "@/lib/tuner/pitchEngine";
 
 // ── 88건반 정의 (export: useStrobeDetector에서 import) ──────────────
@@ -165,35 +165,21 @@ export function usePitchDetector(
               .map((k, i) => k === stableKi ? recentCents.current[i] : null)
               .filter((v): v is number => v !== null);
 
-            // 표준편차 체크 — 튀는 값이 섞여있으면 이번 프레임은 확정 보류
-            const sd = centsArr.length >= 2 ? stddev(centsArr) : 0;
-            const zone = getZone(stableKi);
-            const stabConf = getStabilityConfig(zone);
+            const stableCents = Math.round(median(centsArr) * 10) / 10;
 
-            // Goertzel 도미넌스 검증 — 확정 직전 후보 건반 주파수가 실제로 우세한지 재확인
-            const baseFreq = PIANO_KEYS[stableKi].freq;
-            const gTarget = goertzel(activeBuf, sampleRate, baseFreq).magnitude;
-            const gLo = goertzel(activeBuf, sampleRate, baseFreq * Math.pow(2, -50 / 1200)).magnitude;
-            const gHi = goertzel(activeBuf, sampleRate, baseFreq * Math.pow(2, 50 / 1200)).magnitude;
-            const dominant = gTarget > Math.max(gLo, gHi, 1e-9) * 1.05;
+            const result: PitchResult = {
+              frequency:  fFinal,
+              keyIndex:   stableKi,
+              noteName:   PIANO_KEYS[stableKi].noteName,
+              octave:     PIANO_KEYS[stableKi].octave,
+              cents:      stableCents,
+              confidence: Number(topCount) / WINDOW,
+              rms,
+            };
 
-            if (dominant && sd <= stabConf.maxStddev * 2) {
-              const stableCents = Math.round(median(centsArr) * 10) / 10;
-
-              const result: PitchResult = {
-                frequency:  fFinal,
-                keyIndex:   stableKi,
-                noteName:   PIANO_KEYS[stableKi].noteName,
-                octave:     PIANO_KEYS[stableKi].octave,
-                cents:      stableCents,
-                confidence: Number(topCount) / WINDOW,
-                rms,
-              };
-
-              if (result.confidence >= 0.5) {
-                setCurrentPitch(result);
-                onPitchRef.current?.(result);
-              }
+            if (result.confidence >= 0.5) {
+              setCurrentPitch(result);
+              onPitchRef.current?.(result);
             }
           }
         }
