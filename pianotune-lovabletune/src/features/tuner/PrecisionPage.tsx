@@ -5,7 +5,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { usePitchDetector, PIANO_KEYS } from "@/hooks/usePitchDetector";
-import { median, getZone } from "@/lib/tuner/pitchEngine";
+import { median, getZone, getStabilityConfig, stddev } from "@/lib/tuner/pitchEngine";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
@@ -127,18 +127,81 @@ export default function PrecisionPage() {
 
   useWakeLock(true);
 
-  // 피치 감지 중 → 버퍼 누적, 무음 감지 시 1회 확정
-  // 무음 판정 시간은 구간별로 다르게 (저음은 sustain이 길어서 더 기다림)
+  // ── 시험용/복합 엔진 방식(RMS decay 기반)으로 1회 확정 트리거 판정 ──────
+  // 소리가 잦아드는(peak 대비 감쇠) 순간을 감지해서 확정 — 무음 타이머보다 정교함
+  // (usePrecisionSession의 3회 확정/5회 상한 로직 자체는 변경 없음, 트리거 시점만 개선)
+  const decayKeyRef      = useRef<number | null>(null);
+  const peakRmsRef       = useRef(0);
+  const captureStartRef  = useRef<number | null>(null);
+  const captureCentsRef  = useRef<number[]>([]);
+  const roundConfirmedRef = useRef(false);
+
   const handlePitch = useCallback((result: any) => {
     if (result.confidence < 0.55) return;
+
+    // 건반이 바뀌면 decay 추적 상태 전체 리셋
+    if (decayKeyRef.current !== result.keyIndex) {
+      decayKeyRef.current = result.keyIndex;
+      peakRmsRef.current = 0;
+      captureStartRef.current = null;
+      captureCentsRef.current = [];
+      roundConfirmedRef.current = false;
+    }
+
     onPitchActive(result.keyIndex, result.cents);
+
+    const rms = result.rms ?? 0;
     const zone = getZone(result.keyIndex);
-    const silenceMs = zone === "low" ? 900 : zone === "mid" ? 650 : 450;
-    // 무음 타이머 리셋 (구간별 무음 시간 = 타건 종료 판정)
+    const stabConf = getStabilityConfig(zone);
+
+    // 재타건(새 어택) 감지 → decay 추적 리셋, 새 라운드 시작
+    if (rms > peakRmsRef.current * 1.5 && rms > stabConf.peakThreshold) {
+      peakRmsRef.current = rms;
+      captureStartRef.current = null;
+      captureCentsRef.current = [];
+      roundConfirmedRef.current = false;
+    } else if (rms > peakRmsRef.current) {
+      peakRmsRef.current = rms;
+    }
+
+    const isDecaying = rms < peakRmsRef.current * stabConf.peakRatio
+      && peakRmsRef.current > stabConf.peakThreshold;
+
+    if (isDecaying && !roundConfirmedRef.current) {
+      if (captureStartRef.current === null) {
+        captureStartRef.current = Date.now();
+        captureCentsRef.current = [];
+      }
+      captureCentsRef.current.push(result.cents);
+
+      const elapsed = Date.now() - captureStartRef.current;
+      const sd = captureCentsRef.current.length >= 2 ? stddev(captureCentsRef.current) : 0;
+
+      if (
+        elapsed >= stabConf.durationMs &&
+        captureCentsRef.current.length >= stabConf.minSamples &&
+        sd <= stabConf.maxStddev
+      ) {
+        roundConfirmedRef.current = true;
+        onSilenceDetected(); // 안정 확정 트리거 (기존 로직 그대로 재사용)
+        captureStartRef.current = null;
+        captureCentsRef.current = [];
+        peakRmsRef.current = 0;
+      }
+    } else if (!isDecaying) {
+      captureStartRef.current = null;
+      captureCentsRef.current = [];
+    }
+
+    // 안전장치: decay 조건이 끝내 안 맞는 경우 대비한 완전 무음 폴백
+    const fallbackMs = zone === "low" ? 1800 : zone === "mid" ? 1400 : 900;
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = setTimeout(() => {
-      onSilenceDetected();
-    }, silenceMs);
+      if (!roundConfirmedRef.current) {
+        roundConfirmedRef.current = true;
+        onSilenceDetected();
+      }
+    }, fallbackMs);
   }, [onPitchActive, onSilenceDetected]);
 
   const { isListening, currentPitch, startListening, stopListening, error } =
