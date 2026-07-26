@@ -3,7 +3,7 @@
  * 수동 조율 페이지의 구간/진행 상태 훅
  *
  * 구간 (0-indexed keyIndex):
- *  - middle: A4(48) 기준 시작 → A4~A5(48→60) 위로, 그다음 A4 아래(47→27) — 총 34건반, 1-indexed 49~61, 28~48
+ *  - middle: 60→27 (1-indexed: 61→28, A5부터 아래로 C3까지)
  *  - lower:  26→0  (1-indexed: 27→1,  1번~C3)
  *  - upper:  61→87 (1-indexed: 62→88, A5~88번)
  */
@@ -22,8 +22,7 @@ function range(start: number, endInclusive: number, step: number): number[] {
 }
 
 export const SECTION_ORDERS: Record<ManualSection, number[]> = {
-  // A4(keyIndex 48, 건반49)부터 시작 — 위로 A5까지, 그다음 아래로 이어짐
-  middle: [...range(48, 60, 1), ...range(47, 27, -1)],
+  middle: range(60, 27, -1),
   lower: range(26, 0, -1),
   upper: range(61, 87, +1),
 };
