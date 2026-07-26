@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   detectPitchYIN, getRMS, median,
-  correctOctaveByHPS, getZone, refineByTWM,
+  correctOctaveByHPS,
 } from "@/lib/tuner/pitchEngine";
 
 // ── 88건반 정의 (export: useStrobeDetector에서 import) ──────────────
@@ -136,13 +136,9 @@ export function usePitchDetector(
           // (correctOctaveByHPS는 keyIndex>=52면 그대로 반환)
           const fHps = correctOctaveByHPS(fRaw, activeFreqBuf, sampleRate, analyser.fftSize, rough.keyIndex);
 
-          // TWM 정밀화 파일럿 — 저/중음에서 f0+인하모니시티(B) 동시 재추정
-          // 실패(배음 부족 등)하면 HPS 보정값을 그대로 사용 (안전 폴백)
-          let fFinal = fHps;
-          if (rough.keyIndex < 52) {
-            const twm = refineByTWM(activeFreqBuf, sampleRate, analyser.fftSize, fHps, getZone(rough.keyIndex));
-            if (twm && twm.error < 15) fFinal = twm.f0; // 오차 15¢ 넘으면 신뢰 안 함
-          }
+          // TWM 정밀화는 저음에서 + 방향으로 치우치는 편향이 확인되어 자동탭에서는 비활성화
+          // (HPS 보정까지만 사용, 필요시 재검증 후 재활성화)
+          const fFinal = fHps;
 
           const r = fFinal !== fRaw ? (freqToCentOffset(fFinal) ?? rough) : rough;
 
