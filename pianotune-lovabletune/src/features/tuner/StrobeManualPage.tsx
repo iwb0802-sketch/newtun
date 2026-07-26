@@ -97,16 +97,21 @@ export default function StrobeManualPage() {
   const isListening = pitchDetector.isListening;
   useWakeLock(isListening);
 
-  // ── 스무딩: 복합엔진은 프레임마다 값이 흔들려서 영점(null-meter)이 절대 안 멈춤 ──
-  // 200ms 슬라이딩 윈도우 중앙값으로 스트로브 구동값을 안정화 (기존 useStrobeDetector와 동일 원리)
+  // ── 스무딩 + 유지: 복합엔진은 프레임마다 값이 흔들려서 영점(null-meter)이 절대 안 멈추고,
+  // 소리가 끊기면 값이 사라져서 +/- 로 확인할 대상이 없어짐 → 200ms 스무딩 + 무음에도 마지막 값 유지
   const SMOOTH_WINDOW_MS = 200;
   const smoothWindowRef = useRef<Array<{ t: number; c: number }>>([]);
   const [liveCents, setLiveCents] = useState<number | null>(null);
 
   useEffect(() => {
-    if (liveCentsRaw === null || !isListening) {
+    if (!isListening) {
+      // 마이크 자체를 끈 경우에만 초기화
       smoothWindowRef.current = [];
       setLiveCents(null);
+      return;
+    }
+    if (liveCentsRaw === null) {
+      // 무음 구간 — 마지막 값을 그대로 유지 (+/- 로 계속 확인 가능하도록)
       return;
     }
     const now = Date.now();
