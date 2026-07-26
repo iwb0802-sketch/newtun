@@ -48,11 +48,14 @@ function calcConfidence(autoCount: number, strobeCount: number, autoMedian: numb
  * - 중·고음(partial=1, 건반 37+): 스트로브 cent = 기본음 cent → 가중 평균 OK
  * - 베이스(partial>1, 건반 1~36): 스트로브는 배음 cent (inharmonicity로 fundamental cent와 다름)
  *   → autoMedian(YIN 기본음)만 사용, 스트로브는 참고용
+ *
+ * 가중치: 자동 반복 횟수가 늘수록 자동값 비중을 더 크게 (기존엔 5회 채워도 30% 고정으로 스트로브가 차지 → 과함)
+ * - 3회(최소): 0.60 / 4회: 0.725 / 5회(최대): 0.85 — 스트로브는 미세보정 역할로 축소
  */
 function calcFinal(autoMedian: number | null, strobeMedian: number | null, autoCount: number, blendStrobe: boolean): number | null {
   if (autoMedian === null) return null;
   if (strobeMedian === null || !blendStrobe) return autoCount >= 3 ? autoMedian : null;
-  const autoWeight = Math.min(autoCount / 5, 0.7);
+  const autoWeight = Math.min(0.6 + Math.max(autoCount - 3, 0) * 0.125, 0.85);
   return Math.round((autoMedian * autoWeight + strobeMedian * (1 - autoWeight)) * 10) / 10;
 }
 

@@ -5,7 +5,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { usePitchDetector, PIANO_KEYS } from "@/hooks/usePitchDetector";
-import { median } from "@/lib/tuner/pitchEngine";
+import { median, getZone } from "@/lib/tuner/pitchEngine";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
@@ -116,7 +116,7 @@ export default function PrecisionPage() {
     autoMedian, strobeMedian, confidence, finalCents,
     canConfirm, canAutoSave, needsRecheck, autoStrobeDiff,
     MAX_AUTO, MAX_STROBE,
-    onPitchActive, onSilenceDetected, addStrobeCents,
+    onPitchActive, onSilenceDetected, addStrobeCents, resetPending,
     confirmCurrent, clearAllMeasurements,
   } = session;
 
@@ -127,15 +127,18 @@ export default function PrecisionPage() {
 
   useWakeLock(true);
 
-  // 피치 감지 중 → 버퍼 누적, 0.5초 무음 → 1회 확정
+  // 피치 감지 중 → 버퍼 누적, 무음 감지 시 1회 확정
+  // 무음 판정 시간은 구간별로 다르게 (저음은 sustain이 길어서 더 기다림)
   const handlePitch = useCallback((result: any) => {
     if (result.confidence < 0.55) return;
     onPitchActive(result.keyIndex, result.cents);
-    // 무음 타이머 리셋 (0.5초 무음 = 타건 종료)
+    const zone = getZone(result.keyIndex);
+    const silenceMs = zone === "low" ? 900 : zone === "mid" ? 650 : 450;
+    // 무음 타이머 리셋 (구간별 무음 시간 = 타건 종료 판정)
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = setTimeout(() => {
       onSilenceDetected();
-    }, 500);
+    }, silenceMs);
   }, [onPitchActive, onSilenceDetected]);
 
   const { isListening, currentPitch, startListening, stopListening, error } =
@@ -484,9 +487,18 @@ export default function PrecisionPage() {
                   {needsRecheck && autoStrobeDiff !== null && (
                     <div className="flex items-start gap-2 text-xs text-off bg-off-soft border border-red-200 px-3 py-2 rounded-lg mb-2">
                       <span className="text-off mt-0.5">⚠️</span>
-                      <div>
+                      <div className="flex-1">
                         <p className="font-bold">재측정 필요</p>
                         <p className="text-off">자동({autoMedian !== null ? `${autoMedian > 0 ? '+' : ''}${autoMedian.toFixed(1)}¢` : '--'})와 스트로브({strobeMedian !== null ? `${strobeMedian > 0 ? '+' : ''}${strobeMedian.toFixed(1)}¢` : '--'}) 차이: {autoStrobeDiff.toFixed(1)}¢ (5¢ 초과)</p>
+                        {confirmedAuto.length >= MAX_AUTO && (
+                          <p className="text-off/80 mt-1">최대 {MAX_AUTO}회를 다 채웠는데도 편차가 커요 — 아래 버튼으로 이 건반만 다시 측정하세요.</p>
+                        )}
+                        <button
+                          onClick={() => resetPending()}
+                          className="mt-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-off text-white hover:bg-off/90 active:scale-[0.97] transition-all"
+                        >
+                          ↺ 이 건반 다시 측정
+                        </button>
                       </div>
                     </div>
                   )}
