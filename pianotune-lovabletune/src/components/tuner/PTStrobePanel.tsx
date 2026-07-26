@@ -19,11 +19,11 @@ interface PTStrobePanelProps {
 }
 
 const LOCK_THRESHOLD = 1.5;
-const SEG_W = 5;
+const SEG_W = 3;
 const SEG_GAP = 2;
-const PATTERN_LEN = 4;
+const PATTERN_LEN = 5;
 const LIT_COUNT = 2;
-const SPEED_PX_PER_CENT = 3.2;
+const SPEED_PX_PER_CENT = 2.4;
 
 export default function PTStrobePanel({
   detectedCents, stableCents, isActive,
@@ -85,14 +85,14 @@ export default function PTStrobePanel({
 
         if (!isActive) {
           ctx.shadowBlur = 0;
-          ctx.fillStyle = "rgba(255,45,45,0.08)";
+          ctx.fillStyle = "rgba(200,40,40,0.35)";
         } else if (lit) {
           ctx.shadowColor = glowColor;
           ctx.shadowBlur = 7 * scale;
           ctx.fillStyle = litColor;
         } else {
           ctx.shadowBlur = 0;
-          ctx.fillStyle = "rgba(255,45,45,0.08)";
+          ctx.fillStyle = "rgba(200,40,40,0.35)";
         }
         ctx.fillRect(x, h * 0.15, SEG_W * scale, h * 0.7);
       }
@@ -121,14 +121,14 @@ export default function PTStrobePanel({
   ];
 
   return (
-    <div className="rounded-xl overflow-hidden border border-black/50 shadow-[0_4px_14px_rgba(0,0,0,0.4)] bg-[#111]">
+    <div className="bg-[#111]">
       {/* 스트로브 바 */}
-      <canvas ref={canvasRef} className="w-full block" style={{ height: 54 }} />
+      <canvas ref={canvasRef} className="w-full block" style={{ height: 64 }} />
       {/* LCD 리드아웃 5열 */}
-      <div className="grid grid-cols-5 divide-x divide-black/40" style={{ background: "linear-gradient(180deg,#aab8a4,#8fa189)" }}>
+      <div className="grid grid-cols-5 divide-x divide-black/50 border-t border-black/50" style={{ background: "linear-gradient(180deg,#9aac93,#7f9279)" }}>
         {cols.map(c => (
-          <div key={c.label} className="px-1.5 py-1.5 text-center">
-            <div className="text-[8px] font-bold text-black/50 uppercase tracking-tight leading-tight">{c.label}</div>
+          <div key={c.label} className="px-1 py-1.5 text-center">
+            <div className="text-[8px] font-bold text-black/55 uppercase tracking-tight leading-tight">{c.label}</div>
             <div
               className={cn(locked && c.label === "CENT" ? "text-emerald-800" : "text-black/85")}
               style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 800, lineHeight: 1.2 }}

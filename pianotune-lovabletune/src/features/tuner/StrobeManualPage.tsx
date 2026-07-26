@@ -200,26 +200,26 @@ export default function StrobeManualPage() {
 
       <main className="flex-1 container max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
 
-        {/* ── PT-100 스트로브 패널 (최상단 고정 노출) ── */}
-        <PTStrobePanel
-          detectedCents={liveCents}
-          stableCents={pendingCents}
-          isActive={isListening}
-          noteName={targetKey.noteName}
-          octave={targetKey.octave}
-          keyNumber={targetKey.keyNumber}
-          curveLabel="FLAT"
-          pitchA4={440}
-        />
-
-        {/* ── 키패드 ── */}
-        <PTKeypad
-          onJumpToNote={handleJumpToNote}
-          onAutoToggle={setAutoMode}
-          onReset={handleReset}
-          onNudge={handleNudge}
-          autoMode={autoMode}
-        />
+        {/* ── PT-100 스트로브 + 키패드 (하나의 기기 패널로 통합) ── */}
+        <div className="rounded-2xl overflow-hidden border border-black/60 shadow-lg">
+          <PTStrobePanel
+            detectedCents={liveCents}
+            stableCents={pendingCents}
+            isActive={isListening}
+            noteName={targetKey.noteName}
+            octave={targetKey.octave}
+            keyNumber={targetKey.keyNumber}
+            curveLabel="FLAT"
+            pitchA4={440}
+          />
+          <PTKeypad
+            onJumpToNote={handleJumpToNote}
+            onAutoToggle={setAutoMode}
+            onReset={handleReset}
+            onNudge={handleNudge}
+            autoMode={autoMode}
+          />
+        </div>
 
         {/* ── 확정 패널 (큰 숫자 + 상태 + 확정/리셋) ── */}
         <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
