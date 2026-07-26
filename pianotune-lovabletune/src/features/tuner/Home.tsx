@@ -310,13 +310,13 @@ export default function Home() {
               to="/strobe-manual"
               className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors"
             >
-              수동
+              시험용
             </Link>
             <Link
               to="/test"
               className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors"
             >
-              시험용
+              수동
             </Link>
             <Link
               to="/manual"

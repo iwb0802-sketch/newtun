@@ -234,14 +234,14 @@ export default function StrobeManualPage() {
             </svg>
           </div>
           <div>
-            <h1 className="text-base font-bold text-foreground leading-tight">수동 조율</h1>
+            <h1 className="text-base font-bold text-foreground leading-tight">시험용</h1>
             <p className="text-xs text-muted-foreground/80">PT-100 스타일 · 키패드로 건반 직접 선택</p>
           </div>
         </div>
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
           <Link to="/"       className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">자동</Link>
-          <span              className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">수동</span>
-          <Link to="/test"   className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">시험용</Link>
+          <span              className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">시험용</span>
+          <Link to="/test"   className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">수동</Link>
           <Link to="/manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">복합</Link>
         </nav>
       </header>

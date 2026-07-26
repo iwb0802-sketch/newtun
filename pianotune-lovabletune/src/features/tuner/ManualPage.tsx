@@ -179,8 +179,8 @@ export default function ManualPage() {
         </div>
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
           <Link to="/" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">자동</Link>
-          <Link to="/strobe-manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">수동</Link>
-          <Link to="/test" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">시험용</Link>
+          <Link to="/strobe-manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">시험용</Link>
+          <Link to="/test" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">수동</Link>
           <span       className="px-3 py-1 text-xs font-bold rounded-md bg-card text-precision shadow-sm">복합</span>
         </nav>
       </header>
