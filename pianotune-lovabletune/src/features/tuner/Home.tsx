@@ -307,6 +307,12 @@ export default function Home() {
               자동
             </span>
             <Link
+              to="/strobe-manual"
+              className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors"
+            >
+              수동
+            </Link>
+            <Link
               to="/test"
               className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors"
             >
@@ -317,12 +323,6 @@ export default function Home() {
               className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors"
             >
               복합
-            </Link>
-            <Link
-              to="/strobe-manual"
-              className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors"
-            >
-              수동
             </Link>
           </nav>
           <button onClick={() => setShowSessions(!showSessions)}

@@ -240,9 +240,9 @@ export default function StrobeManualPage() {
         </div>
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
           <Link to="/"       className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">자동</Link>
+          <span              className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">수동</span>
           <Link to="/test"   className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">시험용</Link>
           <Link to="/manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">복합</Link>
-          <span              className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">수동</span>
         </nav>
       </header>
 
