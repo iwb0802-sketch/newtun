@@ -270,16 +270,20 @@ export default function StrobeManualPage() {
           />
         </div>
 
-        {/* ── 이전/다음 + 진행률 (상시 노출) ── */}
-        <TargetNoteBar
-          keyIndex={seq.targetKeyIndex}
-          indexInOrder={seq.indexInOrder}
-          total={seq.total}
-          canPrev={seq.canPrev}
-          canNext={seq.canNext}
-          onPrev={() => { setAutoMode(false); seq.prev(); }}
-          onNext={() => { setAutoMode(false); seq.next(); }}
-        />
+        {/* ── 이전/다음(절반) + 구간 전환(절반) ── */}
+        <div className="grid grid-cols-2 gap-2 items-stretch">
+          <TargetNoteBar
+            keyIndex={seq.targetKeyIndex}
+            indexInOrder={seq.indexInOrder}
+            total={seq.total}
+            canPrev={seq.canPrev}
+            canNext={seq.canNext}
+            onPrev={() => { setAutoMode(false); seq.prev(); }}
+            onNext={() => { setAutoMode(false); seq.next(); }}
+            compact
+          />
+          <SectionTabs section={seq.section} onChange={seq.setSection} compact />
+        </div>
 
         {/* ── 확정 패널 (큰 숫자 = 내가 맞춘 오프셋 + 상태 + 확정/리셋) ── */}
         <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
@@ -374,16 +378,6 @@ export default function StrobeManualPage() {
             {engineError || pitchDetector.error}
           </div>
         )}
-
-        {/* ── 보조: 구간 탭 (필요할 때만 펼치기) ── */}
-        <details className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
-          <summary className="px-4 py-2.5 text-xs font-semibold text-muted-foreground cursor-pointer select-none">
-            구간 전환 (보조) — 하부값/중앙값/상부값
-          </summary>
-          <div className="px-3 pb-3 pt-1">
-            <SectionTabs section={seq.section} onChange={seq.setSection} />
-          </div>
-        </details>
 
         {/* 되돌리기 */}
         {undoStack.length > 0 && (
