@@ -182,17 +182,19 @@ export default function StrobeManualPage() {
 
   // ── 확정 ─────────────────────────────────────────────────────────
   const handleConfirm = useCallback(async () => {
-    if (pendingCents === null) return;
+    if (liveCents === null) return;
+    const finalValue = displayReadout; // 내가 +/- 로 맞춘 값을 그대로 확정
     await ensureSession();
     const ki = seq.targetKeyIndex;
-    recordMeasurement(ki, pendingCents, PIANO_KEYS[ki].freq);
+    recordMeasurement(ki, finalValue, PIANO_KEYS[ki].freq);
     toast.success(
-      `${PIANO_KEYS[ki].noteName}${PIANO_KEYS[ki].octave} (건반 ${ki + 1}) → ${pendingCents > 0 ? "+" : ""}${pendingCents.toFixed(1)}¢`,
+      `${PIANO_KEYS[ki].noteName}${PIANO_KEYS[ki].octave} (건반 ${ki + 1}) → ${finalValue > 0 ? "+" : ""}${finalValue.toFixed(1)}¢`,
       { duration: 1800 }
     );
     setPendingCents(null);
+    setTargetOffset(0);
     seq.next();
-  }, [pendingCents, seq, ensureSession, recordMeasurement]);
+  }, [liveCents, displayReadout, seq, ensureSession, recordMeasurement]);
 
   // ── 마이크 토글 (usePitchDetector가 실제 마이크 소유, 스트로브는 같은 analyser 사용) ──
   const toggleListening = async () => {
@@ -318,16 +320,16 @@ export default function StrobeManualPage() {
           <div className="px-4 py-3 border-t border-border/60 flex gap-2">
             <button
               onClick={handleConfirm}
-              disabled={pendingCents === null}
+              disabled={liveCents === null}
               className={cn(
                 "flex-1 py-3 rounded-xl font-bold text-sm transition-all active:scale-[0.98]",
-                pendingCents !== null
+                liveCents !== null
                   ? "bg-in-tune text-white hover:bg-in-tune/90 shadow-sm"
                   : "bg-muted text-muted-foreground/50 cursor-not-allowed"
               )}
             >
-              {pendingCents !== null
-                ? `✓ 확정  ${pendingCents > 0 ? "+" : ""}${pendingCents.toFixed(1)}¢`
+              {liveCents !== null
+                ? `✓ 확정  ${displayReadout > 0 ? "+" : ""}${displayReadout.toFixed(1)}¢`
                 : "측정 후 확정"}
             </button>
           </div>
