@@ -297,9 +297,9 @@ export default function TestPage() {
               )}
             </div>
             <div className="space-y-1">
-              <EngineRow label="YIN" cents={result?.yinCents ?? null} active={!!result} />
-              <EngineRow label="Goertzel" cents={result?.goertzelCents ?? null} active={!!result?.signalOk} />
-              <EngineRow label="복합 (교차검증)" cents={validatedCents} active={!!result} highlight={crossValid} />
+              <EngineRow label="Y" cents={result?.yinCents ?? null} active={!!result} />
+              <EngineRow label="G" cents={result?.goertzelCents ?? null} active={!!result?.signalOk} />
+              <EngineRow label="C" cents={validatedCents} active={!!result} highlight={crossValid} />
             </div>
             {result && !crossValid && (
               <p className="text-xs text-warn/80 mt-2 px-1">YIN ↔ Goertzel 편차 큼 — Goertzel 단독 사용 중</p>
