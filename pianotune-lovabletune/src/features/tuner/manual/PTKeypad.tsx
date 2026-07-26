@@ -36,18 +36,27 @@ function DigitKey({ digit, letter, onClick, active }: { digit: string; letter?: 
   );
 }
 
-function FuncKey({ label, sub, onClick, active, span }: { label: string; sub?: string; onClick?: () => void; active?: boolean; span?: number }) {
+function FuncKey({ label, sub, onClick, active, span, tone }: {
+  label: string; sub?: string; onClick?: () => void; active?: boolean; span?: number;
+  tone?: "red" | "gray";
+}) {
+  const toneClass = tone === "red"
+    ? "bg-off/20 hover:bg-off/30 border-off/50"
+    : tone === "gray"
+    ? "bg-white/10 hover:bg-white/15 border-white/30"
+    : active ? "bg-in-tune/25" : "bg-[#1c1c1c] hover:bg-[#262626]";
+  const textClass = tone === "red" ? "text-off" : tone === "gray" ? "text-white/80" : "text-off";
   return (
     <button
       onClick={onClick}
       className={cn(
         "flex flex-col items-center justify-center border border-black/60 transition-colors aspect-square",
-        active ? "bg-in-tune/25" : "bg-[#1c1c1c] hover:bg-[#262626]",
+        toneClass,
         span === 2 && "col-span-2 aspect-auto"
       )}
     >
-      <span className="text-sm font-extrabold text-off leading-none">{label}</span>
-      {sub && <span className="text-[11px] font-bold text-off/80 mt-1 leading-none">{sub}</span>}
+      <span className={cn("text-sm font-extrabold leading-none", textClass)}>{label}</span>
+      {sub && <span className={cn("text-[11px] font-bold mt-1 leading-none", tone ? textClass + "/80" : "text-off/80")}>{sub}</span>}
     </button>
   );
 }
@@ -129,15 +138,15 @@ export default function PTKeypad({ onJumpToNote, onAutoToggle, onReset, onNudge,
         <DigitKey digit="4" letter="F" onClick={() => handleNoteKey("F")} active={pendingNote === "F"} />
         <DigitKey digit="5" letter="G" onClick={() => handleNoteKey("G")} active={pendingNote === "G"} />
         <DigitKey digit="6" letter="A" onClick={() => handleNoteKey("A")} active={pendingNote === "A"} />
-        <FuncKey label="-10" onClick={() => onNudge(-10)} />
-        <FuncKey label="+10" onClick={() => onNudge(10)} />
+        <FuncKey label="-10" sub="빨강 누르기" tone="red" onClick={() => onNudge(-10)} />
+        <FuncKey label="+10" sub="회색 누르기" tone="gray" onClick={() => onNudge(10)} />
 
         {/* Row 3: 1/C  2/D  3/E  –  + */}
         <DigitKey digit="1" letter="C" onClick={() => handleNoteKey("C")} active={pendingNote === "C"} />
         <DigitKey digit="2" letter="D" onClick={() => handleNoteKey("D")} active={pendingNote === "D"} />
         <DigitKey digit="3" letter="E" onClick={() => handleNoteKey("E")} active={pendingNote === "E"} />
-        <FuncKey label="–" onClick={() => onNudge(-1)} />
-        <FuncKey label="+" onClick={() => onNudge(1)} />
+        <FuncKey label="–" sub="빨강 누르기" tone="red" onClick={() => onNudge(-1)} />
+        <FuncKey label="+" sub="회색 누르기" tone="gray" onClick={() => onNudge(1)} />
 
         {/* Row 4: 0/OCT  REVERSE(span2)  STEP(span2) */}
         <DigitKey digit="0" letter="OCT" onClick={pendingNote ? openOctave : undefined} active={false} />

@@ -289,7 +289,7 @@ export default function StrobeManualPage() {
         <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
           <div className="px-5 pt-3 flex items-center gap-1.5">
             <span className="text-[10px] text-muted-foreground/70">
-              +/-, -10/+10으로 스트로브가 멈추는 지점을 찾으세요 — 그때 이 숫자가 실제 편차입니다
+              스트로브가 <span className="text-off font-bold">빨강(음 낮음)</span>이면 빨간 버튼(–), <span className="font-bold">회색(음 높음)</span>이면 회색 버튼(+)을 눌러 멈추는 지점을 찾으세요
             </span>
           </div>
           <div className="px-5 pt-2 pb-2 flex items-end justify-between">

@@ -74,8 +74,10 @@ export default function PTStrobePanel({
       ctx.fillRect(0, 0, w, h);
 
       const segFull = (SEG_W + SEG_GAP) * scale;
-      const litColor = locked ? "#22d36b" : "#ff2d2d";
-      const glowColor = locked ? "rgba(34,211,107,0.6)" : "rgba(255,45,45,0.6)";
+      // 음이 떨어짐(flat, 음수) = 빨강 / 음이 높음(sharp, 양수) = 회색 / 정확(LOCKED) = 초록
+      const isFlat = cents !== null && cents < 0;
+      const litColor = locked ? "#22d36b" : isFlat ? "#ff2d2d" : "#9ca3af";
+      const glowColor = locked ? "rgba(34,211,107,0.6)" : isFlat ? "rgba(255,45,45,0.6)" : "rgba(156,163,175,0.6)";
       const segCount = Math.ceil(w / segFull) + PATTERN_LEN;
       const offsetSeg = (phaseRef.current * scale) / segFull;
 
@@ -88,14 +90,14 @@ export default function PTStrobePanel({
 
         if (!isActive) {
           ctx.shadowBlur = 0;
-          ctx.fillStyle = "rgba(200,40,40,0.35)";
+          ctx.fillStyle = "rgba(140,140,140,0.20)";
         } else if (lit) {
           ctx.shadowColor = glowColor;
           ctx.shadowBlur = 7 * scale;
           ctx.fillStyle = litColor;
         } else {
           ctx.shadowBlur = 0;
-          ctx.fillStyle = "rgba(200,40,40,0.35)";
+          ctx.fillStyle = "rgba(140,140,140,0.20)";
         }
         ctx.fillRect(x, h * 0.15, SEG_W * scale, h * 0.7);
       }
