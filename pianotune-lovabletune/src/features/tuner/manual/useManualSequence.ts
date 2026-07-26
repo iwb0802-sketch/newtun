@@ -43,6 +43,7 @@ export interface UseManualSequenceReturn {
   canNext: boolean;
   prev: () => void;
   next: () => void;
+  jumpTo: (keyIndex: number) => void;
 }
 
 export function useManualSequence(): UseManualSequenceReturn {
@@ -77,6 +78,18 @@ export function useManualSequence(): UseManualSequenceReturn {
     }));
   }, [section]);
 
+  // 임의의 건반(keyIndex)으로 직접 점프 — 키패드 등에서 사용
+  const jumpTo = useCallback((keyIndex: number) => {
+    for (const sec of ["lower", "middle", "upper"] as ManualSection[]) {
+      const idx = SECTION_ORDERS[sec].indexOf(keyIndex);
+      if (idx !== -1) {
+        setSectionState(sec);
+        setIndices((prev) => ({ ...prev, [sec]: idx }));
+        return;
+      }
+    }
+  }, []);
+
   return useMemo(
     () => ({
       section,
@@ -88,7 +101,8 @@ export function useManualSequence(): UseManualSequenceReturn {
       canNext: indexInOrder < total - 1,
       prev,
       next,
+      jumpTo,
     }),
-    [section, setSection, indexInOrder, total, targetKeyIndex, prev, next]
+    [section, setSection, indexInOrder, total, targetKeyIndex, prev, next, jumpTo]
   );
 }

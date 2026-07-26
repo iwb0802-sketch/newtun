@@ -1,12 +1,17 @@
 /**
- * StrobeManualPage.tsx — 수동 스트로브 조율 모드 (v2)
+ * StrobeManualPage.tsx — 수동 조율 모드 (v3, PT-100/PT-A1 화면 재현)
+ *
+ * - 상단: PT-100 스타일 스트로브 바 + 5열 LCD (OCT-NOTE/KEY No./CENT/CURVE/PITCH)
+ * - 키패드: 다이얼식 음 선택 (숫자=음이름, OCT=옥타브, AUTO=자동판별, RES=리셋)
+ * - AUTO 모드는 usePitchDetector(자동탭과 동일 엔진)를 같은 마이크로 공유해서 현재 음 자동 추적
+ * - 그래프/세션/내보내기는 하단으로 이동
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { toast as sonnerToast } from "sonner";
 import { cn } from "@/lib/utils";
-import { PIANO_KEYS } from "@/hooks/usePitchDetector";
+import { PIANO_KEYS, usePitchDetector } from "@/hooks/usePitchDetector";
 import { useStrobeDetector } from "@/hooks/useStrobeDetector";
 import { useTuningSession } from "@/hooks/useTuningSession";
 import { useWakeLock } from "@/hooks/useWakeLock";
@@ -15,7 +20,8 @@ import { useUserRole } from "@/hooks/useUserRole";
 import { useManualSequence } from "@/features/tuner/manual/useManualSequence";
 import SectionTabs from "@/features/tuner/manual/SectionTabs";
 import TargetNoteBar from "@/features/tuner/manual/TargetNoteBar";
-import StrobeTuner from "@/components/tuner/StrobeTuner";
+import PTKeypad from "@/features/tuner/manual/PTKeypad";
+import PTStrobePanel from "@/components/tuner/PTStrobePanel";
 import SpectrumGraph from "@/components/tuner/SpectrumGraph";
 import TuningCurveChart from "@/components/tuner/TuningCurveChart";
 import { exportToPdf, exportToImage } from "@/lib/tuner/exportPdf";
@@ -27,6 +33,19 @@ const toast = Object.assign(
     error:   (msg: string) => sonnerToast.error(msg),
   }
 );
+
+// 음이름(자연음) → 반음 인덱스 (C=0 기준)
+const NATURAL_SEMITONE: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+// letter + octave + shift(#/b) → keyIndex (0~87), 범위 밖이면 null
+function noteToKeyIndex(letter: string, octave: number, shift: number): number | null {
+  const base = NATURAL_SEMITONE[letter];
+  if (base === undefined) return null;
+  const midi = (octave + 1) * 12 + base + shift;
+  const keyIndex = midi - 21;
+  if (keyIndex < 0 || keyIndex > 87) return null;
+  return keyIndex;
+}
 
 export default function StrobeManualPage() {
   const { user } = useAuth();
@@ -43,7 +62,10 @@ export default function StrobeManualPage() {
   const activeSessionIdRef = useRef(activeSessionId);
   useEffect(() => { activeSessionIdRef.current = activeSessionId; }, [activeSessionId]);
 
-  // ── 스트로브 (마이크 자체 관리) ──────────────────────────────────
+  // ── 마이크는 usePitchDetector가 소유 (자동판별용, 자동탭과 동일 엔진) ──
+  const pitchDetector = usePitchDetector();
+
+  // ── 스트로브 정밀 엔진 — 같은 analyser 공유 (마이크 중복 오픈 안 함) ──
   const {
     liveCents,
     strobeCents,
@@ -53,14 +75,26 @@ export default function StrobeManualPage() {
     currentKeyIndex: strobeKeyIndex,
     analysisFreq,
     partial,
-    isListening,
-    startListening,
-    stopListening,
+    isListening: strobeLoopActive,
+    startListening: startStrobeLoop,
+    stopListening: stopStrobeLoop,
     micError,
-    analyserRef,
-  } = useStrobeDetector(seq.targetKeyIndex);
+  } = useStrobeDetector(seq.targetKeyIndex, pitchDetector.analyserRef);
 
+  const isListening = pitchDetector.isListening;
   useWakeLock(isListening);
+
+  // ── AUTO 모드: 현재 연주 중인 음을 자동 추적해서 targetKeyIndex 갱신 ──
+  const [autoMode, setAutoMode] = useState(false);
+  const lastAutoKeyRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!autoMode) { lastAutoKeyRef.current = null; return; }
+    if (!pitchDetector.currentPitch) return;
+    const ki = pitchDetector.currentPitch.keyIndex;
+    if (lastAutoKeyRef.current === ki) return;
+    lastAutoKeyRef.current = ki;
+    seq.jumpTo(ki);
+  }, [autoMode, pitchDetector.currentPitch, seq]);
 
   // ── pendingCents: strobeCents가 올 때마다 갱신 ───────────────────
   const [pendingCents, setPendingCents] = useState<number | null>(null);
@@ -77,6 +111,17 @@ export default function StrobeManualPage() {
   }, [seq.targetKeyIndex]);
 
   const handleReset = useCallback(() => setPendingCents(null), []);
+
+  const handleNudge = useCallback((delta: number) => {
+    setPendingCents(prev => (prev !== null ? Math.round((prev + delta) * 10) / 10 : prev));
+  }, []);
+
+  const handleJumpToNote = useCallback((letter: string, octave: number, shift: number) => {
+    const ki = noteToKeyIndex(letter, octave, shift);
+    if (ki === null) { toast.error("피아노 음역을 벗어났습니다 (A0~C8)"); return; }
+    setAutoMode(false);
+    seq.jumpTo(ki);
+  }, [seq]);
 
   // ── 세션 ─────────────────────────────────────────────────────────
   const [showSessionList, setShowSessionList] = useState(false);
@@ -103,16 +148,18 @@ export default function StrobeManualPage() {
     seq.next();
   }, [pendingCents, seq, ensureSession, recordMeasurement]);
 
-  // ── 마이크 토글 ───────────────────────────────────────────────────
+  // ── 마이크 토글 (usePitchDetector가 실제 마이크 소유, 스트로브는 같은 analyser 사용) ──
   const toggleListening = async () => {
     if (isListening) {
-      stopListening();
+      pitchDetector.stopListening();
+      stopStrobeLoop();
     } else {
       if (!activeSessionIdRef.current) {
         const s = await createSession();
         if (s) activeSessionIdRef.current = s.id;
       }
-      await startListening();
+      await pitchDetector.startListening();
+      startStrobeLoop();
     }
   };
 
@@ -140,7 +187,7 @@ export default function StrobeManualPage() {
           </div>
           <div>
             <h1 className="text-base font-bold text-foreground leading-tight">수동 조율</h1>
-            <p className="text-xs text-muted-foreground/80">스트로브 안정 확인 후 수동 확정</p>
+            <p className="text-xs text-muted-foreground/80">PT-100 스타일 · 키패드로 건반 직접 선택</p>
           </div>
         </div>
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
@@ -153,24 +200,29 @@ export default function StrobeManualPage() {
 
       <main className="flex-1 container max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
 
-        {/* 구간 탭 */}
-        <SectionTabs section={seq.section} onChange={seq.setSection} />
-
-        {/* 목표 건반 바 */}
-        <TargetNoteBar
-          keyIndex={seq.targetKeyIndex}
-          indexInOrder={seq.indexInOrder}
-          total={seq.total}
-          canPrev={seq.canPrev}
-          canNext={seq.canNext}
-          onPrev={seq.prev}
-          onNext={seq.next}
+        {/* ── PT-100 스트로브 패널 (최상단 고정 노출) ── */}
+        <PTStrobePanel
+          detectedCents={liveCents}
+          stableCents={pendingCents}
+          isActive={isListening}
+          noteName={targetKey.noteName}
+          octave={targetKey.octave}
+          keyNumber={targetKey.keyNumber}
+          curveLabel="FLAT"
+          pitchA4={440}
         />
 
-        {/* ── 스트로브 메인 패널 ── */}
-        <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
+        {/* ── 키패드 ── */}
+        <PTKeypad
+          onJumpToNote={handleJumpToNote}
+          onAutoToggle={setAutoMode}
+          onReset={handleReset}
+          onNudge={handleNudge}
+          autoMode={autoMode}
+        />
 
-          {/* cents 수치 */}
+        {/* ── 확정 패널 (큰 숫자 + 상태 + 확정/리셋) ── */}
+        <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
           <div className="px-5 pt-4 pb-2 flex items-end justify-between">
             <div>
               <span
@@ -185,7 +237,6 @@ export default function StrobeManualPage() {
               </span>
               <span className="text-lg text-muted-foreground ml-1">¢</span>
             </div>
-            {/* 상태 뱃지 */}
             <div className="flex flex-col items-end gap-1">
               <span className={cn(
                 "text-xs font-semibold px-2 py-0.5 rounded-full",
@@ -202,46 +253,20 @@ export default function StrobeManualPage() {
                   : liveCents !== null ? "● 감지 중"
                   : "대기 중"}
               </span>
-              <span className="text-[10px] text-muted-foreground" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-                {targetKey.noteName}{targetKey.octave} · 건반 {targetKey.keyNumber}
-              </span>
+              {autoMode && (
+                <span className="text-[10px] font-bold text-in-tune bg-in-tune/10 px-1.5 py-0.5 rounded-full">AUTO 추적 중</span>
+              )}
             </div>
           </div>
 
-          {/* 캡처 진행 바 */}
           {isCapturing && (
             <div className="px-5 pb-2">
               <div className="w-full bg-muted rounded-full h-1">
-                <div
-                  className="bg-warn h-1 rounded-full transition-all duration-100"
-                  style={{ width: `${captureProgress * 100}%` }}
-                />
+                <div className="bg-warn h-1 rounded-full transition-all duration-100" style={{ width: `${captureProgress * 100}%` }} />
               </div>
             </div>
           )}
 
-          {/* 스트로브 바 */}
-          <div className="px-0">
-            <StrobeTuner
-              detectedCents={liveCents}
-              stableCents={strobeCents}
-              isCapturing={isCapturing}
-              isActive={isListening}
-              currentNote={currentNote}
-              currentKeyIndex={strobeKeyIndex}
-              analysisFreq={analysisFreq}
-              partial={partial}
-            />
-          </div>
-
-          {/* 스펙트럼 그래프 */}
-          <SpectrumGraph
-            analyserRef={analyserRef}
-            targetKeyIndex={seq.targetKeyIndex}
-            isActive={isListening}
-          />
-
-          {/* 확정 / 리셋 버튼 */}
           <div className="px-4 py-3 border-t border-border/60 flex gap-2">
             <button
               onClick={handleConfirm}
@@ -256,18 +281,6 @@ export default function StrobeManualPage() {
               {pendingCents !== null
                 ? `✓ 확정  ${pendingCents > 0 ? "+" : ""}${pendingCents.toFixed(1)}¢`
                 : "측정 후 확정"}
-            </button>
-            <button
-              onClick={handleReset}
-              disabled={pendingCents === null}
-              className={cn(
-                "px-4 py-3 rounded-xl font-bold text-sm transition-all active:scale-[0.98]",
-                pendingCents !== null
-                  ? "bg-muted hover:bg-muted/70 text-foreground border border-border"
-                  : "bg-muted text-muted-foreground/30 cursor-not-allowed border border-border/40"
-              )}
-            >
-              ↺ 리셋
             </button>
           </div>
         </div>
@@ -295,11 +308,30 @@ export default function StrobeManualPage() {
           <p className="text-xs text-center text-muted-foreground">Pro 등급으로 변경하면 마이크를 사용할 수 있습니다.</p>
         )}
 
-        {micError && (
+        {(micError || pitchDetector.error) && (
           <div className="px-3 py-2 rounded-lg bg-off/10 border border-off/40 text-xs text-off">
-            {micError}
+            {micError || pitchDetector.error}
           </div>
         )}
+
+        {/* ── 보조 이동: 구간 탭 + 이전/다음 (기존 방식, 아래로 이동) ── */}
+        <details className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+          <summary className="px-4 py-2.5 text-xs font-semibold text-muted-foreground cursor-pointer select-none">
+            구간 이동 (보조) — 순서대로 넘기기
+          </summary>
+          <div className="px-3 pb-3 pt-1 flex flex-col gap-2">
+            <SectionTabs section={seq.section} onChange={seq.setSection} />
+            <TargetNoteBar
+              keyIndex={seq.targetKeyIndex}
+              indexInOrder={seq.indexInOrder}
+              total={seq.total}
+              canPrev={seq.canPrev}
+              canNext={seq.canNext}
+              onPrev={() => { setAutoMode(false); seq.prev(); }}
+              onNext={() => { setAutoMode(false); seq.next(); }}
+            />
+          </div>
+        </details>
 
         {/* 되돌리기 */}
         {undoStack.length > 0 && (
@@ -315,6 +347,13 @@ export default function StrobeManualPage() {
         <div className="bg-card border border-border rounded-xl p-2 shadow-sm">
           <TuningCurveChart data={chartData} activeKeyIndex={seq.targetKeyIndex} />
         </div>
+
+        {/* 스펙트럼 그래프 */}
+        <SpectrumGraph
+          analyserRef={pitchDetector.analyserRef}
+          targetKeyIndex={seq.targetKeyIndex}
+          isActive={isListening}
+        />
 
         {/* 세션 + 내보내기 */}
         <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-sm">
