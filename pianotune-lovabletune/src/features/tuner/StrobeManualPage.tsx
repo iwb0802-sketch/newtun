@@ -243,6 +243,7 @@ export default function StrobeManualPage() {
           <span              className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">시험용</span>
           <Link to="/test"   className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">수동</Link>
           <Link to="/manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">복합</Link>
+          <Link to="/pitch-lab" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">실험실</Link>
         </nav>
       </header>
 
