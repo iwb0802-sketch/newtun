@@ -14,7 +14,9 @@ export interface KeyMeasurement {
   strobe1?: number;       // 스트로브 1회값 (cents와 동일, 평균 계산용)
   strobe2?: number;       // 스트로브 2회값
   autoCentsRef?: number;  // 자동 피치 참고값 (그래프에 찍히지 않음)
-  inharmonicityB?: number; // 이 건반에서 측정된 인하모니시티 계수(B) — 시험용2 세션 누적학습용
+  inharmonicityB?: number;          // 이 건반에서 측정된 인하모니시티 계수(B) — 시험용2 세션 누적학습용
+  inharmonicityConfidence?: number; // 0~1, B 추정 신뢰도 (교차검증 오차 + 사용배음수 기반)
+  nPartialsUsed?: number;           // 회귀에 실제 사용된 배음 개수
   frequency: number;
   measuredAt: number;
 }
@@ -115,14 +117,21 @@ export function useTuningSession(userId?: string | null) {
 
   // 자동 피치 참고값만 저장 (그래프에 찍히지 않음)
   // inharmonicityB: 시험용2(Rigaud 최소자승 피팅)에서 측정된 B값 — 세션 내 누적학습용, 있으면 같이 저장
-  const recordMeasurement = useCallback((keyIndex: number, cents: number, frequency: number, inharmonicityB?: number) => {
+  const recordMeasurement = useCallback((
+    keyIndex: number, cents: number, frequency: number,
+    inharmonicityB?: number, inharmonicityConfidence?: number, nPartialsUsed?: number
+  ) => {
     const sid = activeSessionIdRef.current;
     if (!sid) return;
     setSessions(prev => {
       const u = prev.map(s => {
         if (s.id !== sid) return s;
         const existing = s.measurements[keyIndex];
-        const bField = inharmonicityB !== undefined ? { inharmonicityB } : {};
+        const bField = {
+          ...(inharmonicityB !== undefined ? { inharmonicityB } : {}),
+          ...(inharmonicityConfidence !== undefined ? { inharmonicityConfidence } : {}),
+          ...(nPartialsUsed !== undefined ? { nPartialsUsed } : {}),
+        };
         const updated = existing
           ? { ...existing, autoCentsRef: cents, ...bField }
           : { keyIndex, cents: 0, autoCentsRef: cents, frequency, measuredAt: Date.now(), ...bField };

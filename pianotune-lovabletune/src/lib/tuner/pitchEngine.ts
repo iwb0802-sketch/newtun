@@ -495,7 +495,14 @@ function twmError(peaks: SpectralPeak[], f0: number, B: number, numPartials: num
   return err1 + err2;
 }
 
-export interface TWMResult { f0: number; B: number; error: number; }
+export interface TWMResult {
+  f0: number;
+  B: number;
+  error: number;
+  nPartials?: number;   // 회귀에 실제 사용된 배음 개수 (refineByPartialFitV2 전용)
+  confidence?: number;  // 0~1, 적합오차 + 사용배음수 기반 신뢰도 (refineByPartialFitV2 전용)
+}
+
 
 /**
  * f0Guess(YIN+HPS 보정 이후 값) 근방 ±40¢, B는 구간별 범위에서
@@ -661,6 +668,11 @@ export function refineByPartialFitV2(
   }
   const error = errSum / usedPoints.length;
 
-  return { f0: finalF0, B: finalB, error };
+  // ── 신뢰도 점수: 적합오차가 작을수록, 사용된 배음이 많을수록 높음 (0~1) ──
+  const errorScore = Math.max(0, Math.min(1, 1 - error / 25));
+  const partialScore = Math.max(0, Math.min(1, usedPoints.length / maxPartials));
+  const confidence = Math.round(errorScore * partialScore * 100) / 100;
+
+  return { f0: finalF0, B: finalB, error, nPartials: usedPoints.length, confidence };
 }
 

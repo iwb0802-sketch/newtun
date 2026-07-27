@@ -44,6 +44,8 @@ export interface CompositeResult {
   zone: "low" | "mid" | "high";
   partial: number;
   inharmonicityB: number | null; // 이 프레임에서 추정된 인하모니시티 계수 (세션 누적학습용)
+  inharmonicityConfidence: number | null; // 0~1, 이 B추정치의 신뢰도 (적합오차+사용배음수 기반)
+  nPartialsUsed: number | null;           // 회귀에 실제 사용된 배음 개수
 }
 
 export interface UseCompositeTunerReturn {
@@ -208,10 +210,12 @@ export function useCompositeTunerV2(
           const fHps = fYinRaw > 0 ? correctOctaveByHPS(fYinRaw, freqBuf, sr, size, ki) : fYinRaw;
           let fFinal = fHps;
           let twmB: number | null = null;
+          let twmConfidence: number | null = null;
+          let twmNPartials: number | null = null;
           if (fHps > 0 && zone !== "high") {
             const bHint = getBHint?.(ki);
             const twm = refineByPartialFitV2(freqBuf, sr, size, fHps, zone, ki, bHint);
-            if (twm && twm.error < 15) { fFinal = twm.f0; twmB = twm.B; }
+            if (twm && twm.error < 15) { fFinal = twm.f0; twmB = twm.B; twmConfidence = twm.confidence ?? null; twmNPartials = twm.nPartials ?? null; }
           }
           const yinCents = fFinal > 0 ? yinToCents(fFinal, baseFreq, zone) : null;
 
@@ -292,6 +296,8 @@ export function useCompositeTunerV2(
             zone,
             partial,
             inharmonicityB: twmB,
+            inharmonicityConfidence: twmConfidence,
+            nPartialsUsed: twmNPartials,
           };
 
           setResult(newResult);
@@ -394,10 +400,12 @@ export function useCompositeTunerV2(
         // TWM(Two-Way Mismatch) 정밀화 — f0+인하모니시티 동시 재추정 (고음 제외)
         let fFinal = fYinCorrected;
         let twmB: number | null = null;
+        let twmConfidence: number | null = null;
+        let twmNPartials: number | null = null;
         if (fYinCorrected > 0 && zone !== "high") {
           const bHint = getBHint?.(ki);
           const twm = refineByPartialFitV2(freqBuf, sr, analyser.fftSize, fYinCorrected, zone, ki, bHint);
-          if (twm && twm.error < 15) { fFinal = twm.f0; twmB = twm.B; }
+          if (twm && twm.error < 15) { fFinal = twm.f0; twmB = twm.B; twmConfidence = twm.confidence ?? null; twmNPartials = twm.nPartials ?? null; }
         }
 
         const yinCents = fFinal > 0
@@ -513,6 +521,8 @@ export function useCompositeTunerV2(
           zone,
           partial,
           inharmonicityB: twmB,
+          inharmonicityConfidence: twmConfidence,
+          nPartialsUsed: twmNPartials,
         };
 
         setResult(newResult);
