@@ -235,7 +235,7 @@ export default function StrobeManualPage2() {
           </div>
           <div>
             <h1 className="text-base font-bold text-foreground leading-tight">시험용2</h1>
-            <p className="text-xs text-muted-foreground/80">PT-100 스타일 · 다중배음 인하모니시티 피팅 엔진(업그레이드)</p>
+            <p className="text-xs text-muted-foreground/80">PT-100 스타일 · 다중배음 최소자승 인하모니시티 피팅(Rigaud 방식)</p>
           </div>
         </div>
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
