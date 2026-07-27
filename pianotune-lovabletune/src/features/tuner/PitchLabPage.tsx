@@ -226,7 +226,7 @@ export default function PitchLabPage() {
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5 overflow-x-auto">
           <Link to="/" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap">자동</Link>
           <Link to="/strobe-manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap">시험용</Link>
-          <Link to="/test" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap">수동</Link>
+          <Link to="/strobe-manual-2" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap">시험용2</Link>
           <Link to="/manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap">복합</Link>
           <span className="px-3 py-1 text-xs font-bold rounded-md bg-card text-precision shadow-sm whitespace-nowrap">실험실</span>
         </nav>

@@ -9,15 +9,20 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as StrobeManual2RouteImport } from './routes/strobe-manual-2'
 import { Route as StrobeManualRouteImport } from './routes/strobe-manual'
 import { Route as PitchLabRouteImport } from './routes/pitch-lab'
-import { Route as TestRouteImport } from './routes/test'
 import { Route as ManualRouteImport } from './routes/manual'
 import { Route as IndexRouteImport } from './routes/index'
 
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
   id: '/reset-password',
   path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StrobeManual2Route = StrobeManual2RouteImport.update({
+  id: '/strobe-manual-2',
+  path: '/strobe-manual-2',
   getParentRoute: () => rootRouteImport,
 } as any)
 const StrobeManualRoute = StrobeManualRouteImport.update({
@@ -28,11 +33,6 @@ const StrobeManualRoute = StrobeManualRouteImport.update({
 const PitchLabRoute = PitchLabRouteImport.update({
   id: '/pitch-lab',
   path: '/pitch-lab',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TestRoute = TestRouteImport.update({
-  id: '/test',
-  path: '/test',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ManualRoute = ManualRouteImport.update({
@@ -49,51 +49,51 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/manual': typeof ManualRoute
-  '/test': typeof TestRoute
   '/pitch-lab': typeof PitchLabRoute
   '/strobe-manual': typeof StrobeManualRoute
+  '/strobe-manual-2': typeof StrobeManual2Route
   '/reset-password': typeof ResetPasswordRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/manual': typeof ManualRoute
-  '/test': typeof TestRoute
   '/pitch-lab': typeof PitchLabRoute
   '/strobe-manual': typeof StrobeManualRoute
+  '/strobe-manual-2': typeof StrobeManual2Route
   '/reset-password': typeof ResetPasswordRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/manual': typeof ManualRoute
-  '/test': typeof TestRoute
   '/pitch-lab': typeof PitchLabRoute
   '/strobe-manual': typeof StrobeManualRoute
+  '/strobe-manual-2': typeof StrobeManual2Route
   '/reset-password': typeof ResetPasswordRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/manual' | '/test' | '/pitch-lab' | '/strobe-manual' | '/reset-password'
+  fullPaths: '/' | '/manual' | '/pitch-lab' | '/strobe-manual' | '/strobe-manual-2' | '/reset-password'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/manual' | '/test' | '/pitch-lab' | '/strobe-manual' | '/reset-password'
-  id: '__root__' | '/' | '/manual' | '/test' | '/pitch-lab' | '/strobe-manual' | '/reset-password'
+  to: '/' | '/manual' | '/pitch-lab' | '/strobe-manual' | '/strobe-manual-2' | '/reset-password'
+  id: '__root__' | '/' | '/manual' | '/pitch-lab' | '/strobe-manual' | '/strobe-manual-2' | '/reset-password'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ManualRoute: typeof ManualRoute
-  TestRoute: typeof TestRoute
   PitchLabRoute: typeof PitchLabRoute
   StrobeManualRoute: typeof StrobeManualRoute
+  StrobeManual2Route: typeof StrobeManual2Route
   ResetPasswordRoute: typeof ResetPasswordRoute
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ManualRoute: ManualRoute,
-  TestRoute: TestRoute,
   PitchLabRoute: PitchLabRoute,
   StrobeManualRoute: StrobeManualRoute,
+  StrobeManual2Route: StrobeManual2Route,
   ResetPasswordRoute: ResetPasswordRoute,
 }
 export const routeTree = rootRouteImport

@@ -531,3 +531,68 @@ export function refineByTWM(
 
   return { f0: bestF0, B: bestB, error: bestErr };
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// ─── Partial-Fit v2 — refineByTWM의 2단계(coarse→fine) 고정밀 버전 ───
+// 기존 refineByTWM은 f0×B 그리드를 한 번에(coarse만) 스캔해서 격자
+// 간격 이상으로는 정밀해질 수 없음. v2는:
+//   1) 기존과 동일한 넓은 coarse 그리드로 대략적인 (f0, B) 위치를 찾고
+//   2) 그 주변을 훨씬 촘촘한 fine 그리드로 재탐색 (Goertzel 2단계 스캔과 동일 아이디어)
+//   3) 저음은 살아있는 배음이 많으므로 numPartials를 8→최대 14까지 늘려
+//      (나이퀴스트 한도 내에서) 더 많은 데이터로 f0/B를 추정 — 배음 몇 개만
+//      보고 판단하는 것보다 통계적으로 안정적 (Rigaud et al. 2013 방식과 동일 원리)
+// 시험용2 탭 전용 — 기존 refineByTWM/시험용 탭은 변경 없이 그대로 유지.
+// ─────────────────────────────────────────────────────────────────────
+export function refineByPartialFitV2(
+  spectrumDb: Float32Array,
+  sr: number,
+  fftSize: number,
+  f0Guess: number,
+  zone: Zone
+): TWMResult | null {
+  if (f0Guess <= 0) return null;
+
+  // 저음일수록 배음이 더 많이 살아있으므로 더 많은 배음을 활용 (나이퀴스트 한도 내)
+  const maxPartials = zone === "low" ? 14 : zone === "mid" ? 8 : 5;
+  const nyquistCap = Math.floor((sr / 2) / f0Guess);
+  const numPartials = Math.max(2, Math.min(maxPartials, nyquistCap));
+
+  const bMaxCoarse = zone === "low" ? 0.0035 : zone === "mid" ? 0.0010 : 0.0003;
+
+  const peaks = extractPeaks(spectrumDb, sr, fftSize, f0Guess * 0.5, f0Guess * numPartials * 1.6, 20);
+  if (peaks.length < 3) return null; // 배음 3개 미만이면 다중배음 피팅 의미 없음 → 폴백
+
+  // ── 1단계: coarse 그리드 (기존 refineByTWM과 동일한 넓은 탐색 범위) ──
+  const coarseF0Steps = 10;
+  const coarseBSteps = 10;
+  const centsRangeCoarse = 40;
+
+  let bestF0 = f0Guess, bestB = 0, bestErr = Infinity;
+  for (let bi = 0; bi <= coarseBSteps; bi++) {
+    const B = (bi / coarseBSteps) * bMaxCoarse;
+    for (let fi = -coarseF0Steps; fi <= coarseF0Steps; fi++) {
+      const f0 = f0Guess * Math.pow(2, (fi * (centsRangeCoarse / coarseF0Steps)) / 1200);
+      const err = twmError(peaks, f0, B, numPartials);
+      if (err < bestErr) { bestErr = err; bestF0 = f0; bestB = B; }
+    }
+  }
+
+  // ── 2단계: coarse 최적점 주변을 훨씬 촘촘하게 재탐색 (정밀도 향상) ──
+  const fineF0Steps = 8;
+  const fineBSteps = 8;
+  const centsRangeFine = (centsRangeCoarse / coarseF0Steps) * 1.5; // coarse 격자 간격의 1.5배
+  const bRangeFine = (bMaxCoarse / coarseBSteps) * 1.5;
+
+  let fineBestF0 = bestF0, fineBestB = bestB, fineBestErr = bestErr;
+  for (let bi = -fineBSteps; bi <= fineBSteps; bi++) {
+    const B = Math.max(0, bestB + (bi / fineBSteps) * bRangeFine);
+    for (let fi = -fineF0Steps; fi <= fineF0Steps; fi++) {
+      const f0 = bestF0 * Math.pow(2, (fi * (centsRangeFine / fineF0Steps)) / 1200);
+      const err = twmError(peaks, f0, B, numPartials);
+      if (err < fineBestErr) { fineBestErr = err; fineBestF0 = f0; fineBestB = B; }
+    }
+  }
+
+  return { f0: fineBestF0, B: fineBestB, error: fineBestErr };
+}
+

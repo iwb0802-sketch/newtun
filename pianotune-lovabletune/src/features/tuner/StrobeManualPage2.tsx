@@ -1,22 +1,19 @@
 /**
- * TestPage.tsx — 시험용 모드 (v2)
+ * StrobeManualPage.tsx — 수동 조율 모드 (v3, PT-100/PT-A1 화면 재현)
  *
- * UI/확정 흐름은 수동모드(스트로브 휠 + 수동 확정)를 유지하되,
- * 감지엔진 내부는 복합모드(useCompositeTuner)에서 그대로 가져옴:
- * - 감지엔진: YIN + Goertzel 2단계 스캔 듀얼 엔진
- * - 버퍼크기: 구간별 동적 (저음 8192 / 중고음 4096)
- * - 신뢰도검증: YIN ↔ Goertzel 교차검증 (구간별 허용 편차)
- * - 배음보정: HPS 옥타브 보정 + 동적 배음(partial) 선택
- *
- * 자동 확정/자동 진행은 하지 않음 — 엔진이 안정값을 내면 사용자가 직접 확정.
+ * - 상단: PT-100 스타일 스트로브 바 + 5열 LCD (OCT-NOTE/KEY No./CENT/CURVE/PITCH)
+ * - 키패드: 다이얼식 음 선택 (숫자=음이름, OCT=옥타브, AUTO=자동판별, RES=리셋)
+ * - AUTO 모드는 usePitchDetector(자동탭과 동일 엔진)를 같은 마이크로 공유해서 현재 음 자동 추적
+ * - 그래프/세션/내보내기는 하단으로 이동
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { toast as sonnerToast } from "sonner";
 import { cn } from "@/lib/utils";
-import { PIANO_KEYS } from "@/hooks/usePitchDetector";
-import { useCompositeTuner, CompositeResult } from "@/hooks/useCompositeTuner";
+import { PIANO_KEYS, usePitchDetector } from "@/hooks/usePitchDetector";
+import { useCompositeTunerV2, CompositeResult } from "@/hooks/useCompositeTunerV2";
+import { median } from "@/lib/tuner/pitchEngine";
 import { useTuningSession } from "@/hooks/useTuningSession";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useAuth } from "@/hooks/useAuth";
@@ -24,7 +21,8 @@ import { useUserRole } from "@/hooks/useUserRole";
 import { useManualSequence } from "@/features/tuner/manual/useManualSequence";
 import SectionTabs from "@/features/tuner/manual/SectionTabs";
 import TargetNoteBar from "@/features/tuner/manual/TargetNoteBar";
-import StrobeBar from "@/components/tuner/StrobeBar";
+import PTKeypad from "@/features/tuner/manual/PTKeypad";
+import PTStrobePanel from "@/components/tuner/PTStrobePanel";
 import SpectrumGraph from "@/components/tuner/SpectrumGraph";
 import TuningCurveChart from "@/components/tuner/TuningCurveChart";
 import { exportToPdf, exportToImage } from "@/lib/tuner/exportPdf";
@@ -37,33 +35,20 @@ const toast = Object.assign(
   }
 );
 
-function EngineRow({ label, cents, active, highlight }: {
-  label: string; cents: number | null; active: boolean; highlight?: boolean;
-}) {
-  return (
-    <div className={cn(
-      "flex items-center justify-between px-3 py-1.5 rounded-lg text-xs transition-colors",
-      highlight ? "bg-precision/10 border border-precision/30"
-        : active  ? "bg-muted/60 border border-border"
-        : "bg-muted/30"
-    )}>
-      <span className={cn("font-semibold w-20", highlight ? "text-precision" : "text-muted-foreground")}>
-        {label}
-      </span>
-      <span
-        className={cn(
-          "font-bold tabular-nums w-16 text-right",
-          highlight ? "text-foreground" : active ? "text-foreground/80" : "text-muted-foreground/40"
-        )}
-        style={{ fontFamily: "'JetBrains Mono', monospace" }}
-      >
-        {cents !== null ? `${cents > 0 ? "+" : ""}${cents.toFixed(1)}¢` : "—"}
-      </span>
-    </div>
-  );
+// 음이름(자연음) → 반음 인덱스 (C=0 기준)
+const NATURAL_SEMITONE: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+// letter + octave + shift(#/b) → keyIndex (0~87), 범위 밖이면 null
+function noteToKeyIndex(letter: string, octave: number, shift: number): number | null {
+  const base = NATURAL_SEMITONE[letter];
+  if (base === undefined) return null;
+  const midi = (octave + 1) * 12 + base + shift;
+  const keyIndex = midi - 21;
+  if (keyIndex < 0 || keyIndex > 87) return null;
+  return keyIndex;
 }
 
-export default function TestPage() {
+export default function StrobeManualPage2() {
   const { user } = useAuth();
   const { isPro } = useUserRole(user?.id);
 
@@ -78,32 +63,111 @@ export default function TestPage() {
   const activeSessionIdRef = useRef(activeSessionId);
   useEffect(() => { activeSessionIdRef.current = activeSessionId; }, [activeSessionId]);
 
-  // ── pendingCents: 엔진이 안정값(finalCents)을 내면 갱신, 자동저장은 하지 않음 ──
-  const [pendingCents, setPendingCents] = useState<number | null>(null);
-  const [lastEngineMeta, setLastEngineMeta] = useState<CompositeResult | null>(null);
+  // ── 마이크는 usePitchDetector가 소유 (자동판별용, 자동탭과 동일 엔진) ──
+  const pitchDetector = usePitchDetector();
 
+  // ── pendingCents: 엔진이 안정값(finalCents)을 내면 handleEngineConfirmed에서 직접 갱신 ──
+  const [pendingCents, setPendingCents] = useState<number | null>(null);
+
+  // ── 스트로브 정밀 엔진 — 복합엔진(YIN+Goertzel+HPS+TWM) + 같은 analyser 공유 ──
+  const [lastEngineMeta, setLastEngineMeta] = useState<CompositeResult | null>(null);
   const handleEngineConfirmed = useCallback((r: CompositeResult) => {
     if (r.finalCents === null) return;
     setPendingCents(r.finalCents);
     setLastEngineMeta(r);
   }, []);
 
-  // ── 복합 엔진(YIN + Goertzel + 교차검증 + HPS 배음보정) 그대로 사용 ──
-  const { isListening, result, startListening, stopListening, error, analyserRef } =
-    useCompositeTuner(seq.targetKeyIndex, handleEngineConfirmed);
+  const {
+    result: engineResult,
+    startListening: startStrobeLoop,
+    stopListening: stopStrobeLoop,
+    error: engineError,
+  } = useCompositeTunerV2(seq.targetKeyIndex, handleEngineConfirmed, pitchDetector.analyserRef);
 
+  // 실시간 흐름용 — 교차검증 전이라도 즉시 표시 (YIN 우선, 없으면 Goertzel)
+  const liveCentsRaw   = engineResult?.yinCents ?? engineResult?.goertzelCents ?? null;
+  const strobeCents    = pendingCents; // 자동 확정된 값 (하위 호환용 별칭)
+  const isCapturing    = engineResult?.isCapturing ?? false;
+  const captureProgress = engineResult?.captureProgress ?? 0;
+  const currentNote     = engineResult ? `${engineResult.noteName}${engineResult.octave}` : null;
+  const strobeKeyIndex  = engineResult?.keyIndex ?? null;
+  const analysisFreq    = engineResult?.frequency ?? null;
+  const partial         = engineResult?.partial ?? lastEngineMeta?.partial ?? null;
+
+  const isListening = pitchDetector.isListening;
   useWakeLock(isListening);
 
-  // 건반 바뀌면 pendingCents 리셋
+  // ── 스무딩 + 유지: 복합엔진은 프레임마다 값이 흔들려서 영점(null-meter)이 절대 안 멈추고,
+  // 소리가 끊기면 값이 사라져서 +/- 로 확인할 대상이 없어짐 → 200ms 스무딩 + 무음에도 마지막 값 유지
+  const SMOOTH_WINDOW_MS = 200;
+  const smoothWindowRef = useRef<Array<{ t: number; c: number }>>([]);
+  const [liveCents, setLiveCents] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isListening) {
+      // 마이크 자체를 끈 경우에만 초기화
+      smoothWindowRef.current = [];
+      setLiveCents(null);
+      return;
+    }
+    if (liveCentsRaw === null) {
+      // 무음 구간 — 마지막 값을 그대로 유지 (+/- 로 계속 확인 가능하도록)
+      return;
+    }
+    const now = Date.now();
+    smoothWindowRef.current.push({ t: now, c: liveCentsRaw });
+    smoothWindowRef.current = smoothWindowRef.current.filter(s => now - s.t <= SMOOTH_WINDOW_MS);
+    const med = Math.round(median(smoothWindowRef.current.map(s => s.c)) * 10) / 10;
+    if (isFinite(med)) setLiveCents(med);
+  }, [liveCentsRaw, isListening]);
+
+  // ── AUTO 모드: 현재 연주 중인 음을 자동 추적해서 targetKeyIndex 갱신 ──
+  const [autoMode, setAutoMode] = useState(false);
+  const lastAutoKeyRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!autoMode) { lastAutoKeyRef.current = null; return; }
+    if (!pitchDetector.currentPitch) return;
+    const ki = pitchDetector.currentPitch.keyIndex;
+    if (lastAutoKeyRef.current === ki) return;
+    lastAutoKeyRef.current = ki;
+    seq.jumpTo(ki);
+  }, [autoMode, pitchDetector.currentPitch, seq]);
+
+  // ── targetOffset: 영점(null-meter) 방식 ──────────────────────────
+  // 건반 치면 화면엔 0이 뜨고, 실제로는 스트로브가 원시 오차만큼 빠르게 흐름.
+  // +/-, -10/+10으로 오프셋을 눌러서 스트로브가 멈추는 지점 = 그 음의 실제 cents.
+  // 저장되는 값(pendingCents)은 원음 raw 그대로 — 화면 표시만 분리.
+  const [targetOffset, setTargetOffset] = useState(0);
+
+  // 건반 바뀌면 pendingCents + targetOffset + 스무딩 윈도우 리셋
   useEffect(() => {
     setPendingCents(null);
-    setLastEngineMeta(null);
+    setTargetOffset(0);
+    smoothWindowRef.current = [];
+    setLiveCents(null);
   }, [seq.targetKeyIndex]);
 
   const handleReset = useCallback(() => {
     setPendingCents(null);
-    setLastEngineMeta(null);
+    setTargetOffset(0);
   }, []);
+
+  const handleNudge = useCallback((delta: number) => {
+    setTargetOffset(prev => Math.round((prev + delta) * 10) / 10);
+  }, []);
+
+  // 스트로브를 움직이는 값 = 원시 오차 - 오프셋 (0에 가까워질수록 스트로브 정지)
+  const strobeDriverCents = liveCents !== null ? Math.round((liveCents - targetOffset) * 10) / 10 : null;
+  const strobeLocked = strobeDriverCents !== null && Math.abs(strobeDriverCents) <= 0.5; // 반올림해서 0일 때만 LOCKED
+  // 화면/LCD에 표시되는 숫자 = 내가 눌러서 맞춘 오프셋값 (원시값 아님)
+  const displayReadout = targetOffset;
+
+  const handleJumpToNote = useCallback((letter: string, octave: number, shift: number) => {
+    const ki = noteToKeyIndex(letter, octave, shift);
+    if (ki === null) { toast.error("피아노 음역을 벗어났습니다 (A0~C8)"); return; }
+    setAutoMode(false);
+    seq.jumpTo(ki);
+  }, [seq]);
 
   // ── 세션 ─────────────────────────────────────────────────────────
   const [showSessionList, setShowSessionList] = useState(false);
@@ -118,53 +182,42 @@ export default function TestPage() {
 
   // ── 확정 ─────────────────────────────────────────────────────────
   const handleConfirm = useCallback(async () => {
-    if (pendingCents === null) return;
+    if (liveCents === null) return;
+    const finalValue = displayReadout; // 내가 +/- 로 맞춘 값을 그대로 확정
     await ensureSession();
     const ki = seq.targetKeyIndex;
-    recordMeasurement(ki, pendingCents, PIANO_KEYS[ki].freq);
+    recordMeasurement(ki, finalValue, PIANO_KEYS[ki].freq);
     toast.success(
-      `${PIANO_KEYS[ki].noteName}${PIANO_KEYS[ki].octave} (건반 ${ki + 1}) → ${pendingCents > 0 ? "+" : ""}${pendingCents.toFixed(1)}¢`,
+      `${PIANO_KEYS[ki].noteName}${PIANO_KEYS[ki].octave} (건반 ${ki + 1}) → ${finalValue > 0 ? "+" : ""}${finalValue.toFixed(1)}¢`,
       { duration: 1800 }
     );
     setPendingCents(null);
-    setLastEngineMeta(null);
+    setTargetOffset(0);
     seq.next();
-  }, [pendingCents, seq, ensureSession, recordMeasurement]);
+  }, [liveCents, displayReadout, seq, ensureSession, recordMeasurement]);
 
-  // ── 마이크 토글 ───────────────────────────────────────────────────
+  // ── 마이크 토글 (usePitchDetector가 실제 마이크 소유, 스트로브는 같은 analyser 사용) ──
   const toggleListening = async () => {
     if (isListening) {
-      stopListening();
+      pitchDetector.stopListening();
+      stopStrobeLoop();
     } else {
       if (!activeSessionIdRef.current) {
         const s = await createSession();
         if (s) activeSessionIdRef.current = s.id;
       }
-      await startListening();
+      await pitchDetector.startListening();
+      startStrobeLoop();
     }
   };
 
   const targetKey = PIANO_KEYS[seq.targetKeyIndex];
 
-  // 표시용 값: 엔진 result에서 그대로 파생
-  // 스트로브 실시간 흐름용 — 교차검증 전이라도 즉시 표시되도록 원시값 우선순위로 선택
-  // (YIN 우선, 없으면 Goertzel) — 교차검증된 liveCents는 확정 순간(finalCents)에만 사용
-  const rawLiveCents    = result?.yinCents ?? result?.goertzelCents ?? null;
-  const liveCents       = rawLiveCents; // 스트로브/큰 숫자 표시에 사용하는 실시간 값
-  const validatedCents  = result?.liveCents ?? null; // 교차검증된 가중평균 (엔진 상세 패널용)
-  const isCapturing    = result?.isCapturing ?? false;
-  const captureProgress = result?.captureProgress ?? 0;
-  const currentNote     = result ? `${result.noteName}${result.octave}` : null;
-  const currentKeyIndex = result?.keyIndex ?? null;
-  const analysisFreq    = result?.frequency ?? null;
-  const partial         = result?.partial ?? lastEngineMeta?.partial ?? null;
-  const crossValid      = result?.crossValid ?? false;
-
-  // cents 색상
-  const absC = pendingCents !== null ? Math.abs(pendingCents) : null;
+  // cents 색상 — 남은 오차(strobeDriverCents)가 얼마나 0에 가까운지로 판단
+  const absC = strobeDriverCents !== null ? Math.abs(strobeDriverCents) : null;
   const centsColor = absC === null
     ? "text-muted-foreground/30"
-    : absC <= 2 ? "text-in-tune"
+    : strobeLocked ? "text-in-tune"
     : absC <= 8 ? "text-warn"
     : "text-off";
 
@@ -181,13 +234,14 @@ export default function TestPage() {
             </svg>
           </div>
           <div>
-            <h1 className="text-base font-bold text-foreground leading-tight">수동</h1>
+            <h1 className="text-base font-bold text-foreground leading-tight">시험용2</h1>
+            <p className="text-xs text-muted-foreground/80">PT-100 스타일 · 다중배음 인하모니시티 피팅 엔진(업그레이드)</p>
           </div>
         </div>
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
           <Link to="/"              className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">자동</Link>
           <Link to="/strobe-manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">시험용</Link>
-          <span                     className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">수동</span>
+          <span                     className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">시험용2</span>
           <Link to="/manual"        className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">복합</Link>
           <Link to="/pitch-lab"     className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">실험실</Link>
         </nav>
@@ -195,151 +249,104 @@ export default function TestPage() {
 
       <main className="flex-1 container max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
 
-        {/* 구간 탭 */}
-        <SectionTabs section={seq.section} onChange={seq.setSection} />
+        {/* ── PT-100 스트로브 + 키패드 (하나의 기기 패널로 통합) ── */}
+        <div className="rounded-2xl overflow-hidden border border-black/60 shadow-lg">
+          <PTStrobePanel
+            detectedCents={strobeDriverCents}
+            stableCents={null}
+            readoutCents={displayReadout}
+            isActive={isListening}
+            noteName={targetKey.noteName}
+            octave={targetKey.octave}
+            keyNumber={targetKey.keyNumber}
+            curveLabel="FLAT"
+            pitchA4={440}
+          />
+          <PTKeypad
+            onJumpToNote={handleJumpToNote}
+            onAutoToggle={setAutoMode}
+            onReset={handleReset}
+            onNudge={handleNudge}
+            autoMode={autoMode}
+          />
+        </div>
 
-        {/* 목표 건반 바 */}
-        <TargetNoteBar
-          keyIndex={seq.targetKeyIndex}
-          indexInOrder={seq.indexInOrder}
-          total={seq.total}
-          canPrev={seq.canPrev}
-          canNext={seq.canNext}
-          onPrev={seq.prev}
-          onNext={seq.next}
-        />
+        {/* ── 이전/다음(절반) + 구간 전환(절반) ── */}
+        <div className="grid grid-cols-2 gap-2 items-stretch">
+          <TargetNoteBar
+            keyIndex={seq.targetKeyIndex}
+            indexInOrder={seq.indexInOrder}
+            total={seq.total}
+            canPrev={seq.canPrev}
+            canNext={seq.canNext}
+            onPrev={() => { setAutoMode(false); seq.prev(); }}
+            onNext={() => { setAutoMode(false); seq.next(); }}
+            compact
+          />
+          <SectionTabs section={seq.section} onChange={seq.setSection} compact />
+        </div>
 
-        {/* ── 스트로브 메인 패널 ── */}
+        {/* ── 확정 패널 (큰 숫자 = 내가 맞춘 오프셋 + 상태 + 확정/리셋) ── */}
         <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
-
-          {/* cents 수치 */}
-          <div className="px-5 pt-4 pb-2 flex items-end justify-between">
+          <div className="px-5 pt-3 flex items-center gap-1.5">
+            <span className="text-[10px] text-muted-foreground/70">
+              스트로브가 <span className="text-off font-bold">빨강(음 낮음)</span>이면 빨간 버튼(–), <span className="font-bold">회색(음 높음)</span>이면 회색 버튼(+)을 눌러 멈추는 지점을 찾으세요
+            </span>
+          </div>
+          <div className="px-5 pt-2 pb-2 flex items-end justify-between">
             <div>
               <span
                 className={cn("text-5xl font-black tabular-nums transition-colors duration-100", centsColor)}
                 style={{ fontFamily: "'JetBrains Mono', monospace" }}
               >
-                {pendingCents !== null
-                  ? `${pendingCents > 0 ? "+" : ""}${pendingCents.toFixed(1)}`
-                  : liveCents !== null
-                  ? `${liveCents > 0 ? "+" : ""}${liveCents.toFixed(1)}`
-                  : "—"}
+                {`${displayReadout > 0 ? "+" : ""}${displayReadout.toFixed(1)}`}
               </span>
               <span className="text-lg text-muted-foreground ml-1">¢</span>
             </div>
-            {/* 상태 뱃지 */}
             <div className="flex flex-col items-end gap-1">
               <span className={cn(
                 "text-xs font-semibold px-2 py-0.5 rounded-full",
-                isCapturing
-                  ? "bg-warn/15 text-warn"
-                  : pendingCents !== null
-                  ? absC !== null && absC <= 2 ? "bg-in-tune/15 text-in-tune" : "bg-primary/10 text-primary"
+                strobeLocked
+                  ? "bg-in-tune/15 text-in-tune"
                   : liveCents !== null
                   ? "bg-warn/15 text-warn"
                   : "bg-muted text-muted-foreground"
               )}>
-                {isCapturing ? "● 수집 중"
-                  : pendingCents !== null ? "● 안정값"
-                  : liveCents !== null ? "● 감지 중"
+                {strobeLocked ? "● LOCKED (정지)"
+                  : liveCents !== null ? "● 스트로브 흐르는 중"
                   : "대기 중"}
               </span>
-              {/* 신뢰도검증 뱃지 */}
-              {result && (
-                <span className={cn(
-                  "flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full",
-                  crossValid ? "bg-in-tune/15 text-in-tune" : "bg-warn/15 text-warn"
-                )}>
-                  <span className={cn("w-1.5 h-1.5 rounded-full", crossValid ? "bg-in-tune" : "bg-warn")} />
-                  {crossValid ? "교차검증 ✓" : "YIN 단독"}
-                </span>
+              {strobeCents !== null && (
+                <span className="text-[10px] text-muted-foreground/70">자동측정: {strobeCents > 0 ? "+" : ""}{strobeCents.toFixed(1)}¢</span>
               )}
-              <span className="text-[10px] text-muted-foreground" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-                {targetKey.noteName}{targetKey.octave} · 건반 {targetKey.keyNumber}
-              </span>
+              {autoMode && (
+                <span className="text-[10px] font-bold text-in-tune bg-in-tune/10 px-1.5 py-0.5 rounded-full">AUTO 추적 중</span>
+              )}
             </div>
           </div>
 
-          {/* 캡처 진행 바 */}
           {isCapturing && (
             <div className="px-5 pb-2">
               <div className="w-full bg-muted rounded-full h-1">
-                <div
-                  className="bg-warn h-1 rounded-full transition-all duration-100"
-                  style={{ width: `${captureProgress * 100}%` }}
-                />
+                <div className="bg-warn h-1 rounded-full transition-all duration-100" style={{ width: `${captureProgress * 100}%` }} />
               </div>
             </div>
           )}
 
-          {/* 스트로브 바 (PT-100 스타일) */}
-          <div className="px-0">
-            <StrobeBar
-              detectedCents={liveCents}
-              stableCents={pendingCents}
-              isCapturing={isCapturing}
-              isActive={isListening}
-              currentNote={currentNote}
-              currentKeyIndex={currentKeyIndex}
-              analysisFreq={analysisFreq}
-              partial={partial}
-            />
-          </div>
-
-          {/* 엔진 상세 (YIN / Goertzel / 복합 비교) */}
-          <div className="px-4 py-3 border-t border-border/60">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">엔진 상세</h3>
-              {result && (
-                <span className="text-[10px] text-muted-foreground/80" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-                  {result.zone.toUpperCase()} zone
-                </span>
-              )}
-            </div>
-            <div className="space-y-1">
-              <EngineRow label="Y" cents={result?.yinCents ?? null} active={!!result} />
-              <EngineRow label="G" cents={result?.goertzelCents ?? null} active={!!result?.signalOk} />
-              <EngineRow label="C" cents={validatedCents} active={!!result} highlight={crossValid} />
-            </div>
-            {result && !crossValid && (
-              <p className="text-xs text-warn/80 mt-2 px-1">YIN ↔ Goertzel 편차 큼 — Goertzel 단독 사용 중</p>
-            )}
-          </div>
-
-          {/* 스펙트럼 그래프 */}
-          <SpectrumGraph
-            analyserRef={analyserRef}
-            targetKeyIndex={seq.targetKeyIndex}
-            isActive={isListening}
-          />
-
-          {/* 확정 / 리셋 버튼 */}
           <div className="px-4 py-3 border-t border-border/60 flex gap-2">
             <button
               onClick={handleConfirm}
-              disabled={pendingCents === null}
+              disabled={liveCents === null}
               className={cn(
                 "flex-1 py-3 rounded-xl font-bold text-sm transition-all active:scale-[0.98]",
-                pendingCents !== null
+                liveCents !== null
                   ? "bg-in-tune text-white hover:bg-in-tune/90 shadow-sm"
                   : "bg-muted text-muted-foreground/50 cursor-not-allowed"
               )}
             >
-              {pendingCents !== null
-                ? `✓ 확정  ${pendingCents > 0 ? "+" : ""}${pendingCents.toFixed(1)}¢`
+              {liveCents !== null
+                ? `✓ 확정  ${displayReadout > 0 ? "+" : ""}${displayReadout.toFixed(1)}¢`
                 : "측정 후 확정"}
-            </button>
-            <button
-              onClick={handleReset}
-              disabled={pendingCents === null}
-              className={cn(
-                "px-4 py-3 rounded-xl font-bold text-sm transition-all active:scale-[0.98]",
-                pendingCents !== null
-                  ? "bg-muted hover:bg-muted/70 text-foreground border border-border"
-                  : "bg-muted text-muted-foreground/30 cursor-not-allowed border border-border/40"
-              )}
-            >
-              ↺ 리셋
             </button>
           </div>
         </div>
@@ -367,9 +374,9 @@ export default function TestPage() {
           <p className="text-xs text-center text-muted-foreground">Pro 등급으로 변경하면 마이크를 사용할 수 있습니다.</p>
         )}
 
-        {error && (
+        {(engineError || pitchDetector.error) && (
           <div className="px-3 py-2 rounded-lg bg-off/10 border border-off/40 text-xs text-off">
-            {error}
+            {engineError || pitchDetector.error}
           </div>
         )}
 
@@ -387,6 +394,13 @@ export default function TestPage() {
         <div className="bg-card border border-border rounded-xl p-2 shadow-sm">
           <TuningCurveChart data={chartData} activeKeyIndex={seq.targetKeyIndex} />
         </div>
+
+        {/* 스펙트럼 그래프 */}
+        <SpectrumGraph
+          analyserRef={pitchDetector.analyserRef}
+          targetKeyIndex={seq.targetKeyIndex}
+          isActive={isListening}
+        />
 
         {/* 세션 + 내보내기 */}
         <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-sm">
