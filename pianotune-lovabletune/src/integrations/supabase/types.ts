@@ -14,6 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
+      piano_profiles: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          scale: Json
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          scale?: Json
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          scale?: Json
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       tuning_sessions: {
         Row: {
           created_at: string

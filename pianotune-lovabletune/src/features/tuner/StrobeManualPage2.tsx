@@ -15,6 +15,7 @@ import { PIANO_KEYS, usePitchDetector } from "@/hooks/usePitchDetector";
 import { useCompositeTunerV2, CompositeResult } from "@/hooks/useCompositeTunerV2";
 import { median } from "@/lib/tuner/pitchEngine";
 import { useTuningSession } from "@/hooks/useTuningSession";
+import { usePianoProfiles } from "@/hooks/usePianoProfiles";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
@@ -61,13 +62,36 @@ export default function StrobeManualPage2() {
     chartData, measuredCount,
   } = useTuningSession(null);
 
+  // ── 피아노별 저장 프로필: 세션(1회 조율)과 별개로, 같은 피아노는 여러 세션에
+  // 걸쳐 인하모니시티(B) 학습 데이터가 영구적으로 이어지도록 함 ──
+  const {
+    profiles, activeProfile, activeProfileId, setActiveProfileId,
+    createProfile, renameProfile, updateProfileScale,
+  } = usePianoProfiles(null);
+  const profileAutoCreatedRef = useRef(false);
+  useEffect(() => {
+    if (!profileAutoCreatedRef.current && profiles.length === 0) {
+      profileAutoCreatedRef.current = true;
+      createProfile("피아노 1");
+    }
+  }, [profiles.length, createProfile]);
+
   const activeSessionIdRef = useRef(activeSessionId);
   useEffect(() => { activeSessionIdRef.current = activeSessionId; }, [activeSessionId]);
 
-  // ── 세션 내 누적학습: 이미 측정된 건반들의 인하모니시티(B)를 모아
-  // 인접 건반 참고용으로 씀 (Verituner류 ETD의 "피아노별 스케일 학습"과 같은 개념) ──
+  // ── 피아노 프로필 누적학습: "이 피아노"에 대해 여러 세션에 걸쳐 쌓인 인하모니시티(B)를
+  // 인접 건반 참고용으로 씀 (Verituner류 ETD의 "피아노별 스케일 학습"과 같은 개념).
+  // 프로필이 아직 없으면(과도기) 현재 세션 자체 측정값으로 폴백. ──
   const measuredBPoints: BPoint[] = useMemo(() => {
     const pts: BPoint[] = [];
+    if (activeProfile) {
+      for (const entry of Object.values(activeProfile.scale)) {
+        if (entry.B > 0) {
+          pts.push({ keyIndex: entry.keyIndex, B: entry.B, confidence: entry.confidence });
+        }
+      }
+      return pts;
+    }
     if (activeSession) {
       for (const [k, v] of Object.entries(activeSession.measurements)) {
         if (v.inharmonicityB !== undefined && v.inharmonicityB !== null && v.inharmonicityB > 0) {
@@ -80,7 +104,7 @@ export default function StrobeManualPage2() {
       }
     }
     return pts;
-  }, [activeSession]);
+  }, [activeProfile, activeSession]);
 
   // 엔진 루프(rAF 클로저)는 최신 렌더를 못 보므로 ref로 최신값 유지
   const measuredBPointsRef = useRef<BPoint[]>([]);
@@ -207,6 +231,7 @@ export default function StrobeManualPage2() {
 
   // ── 세션 ─────────────────────────────────────────────────────────
   const [showSessionList, setShowSessionList] = useState(false);
+  const [showProfileList, setShowProfileList] = useState(false);
   const [userName, setUserName] = useState("");
 
   const ensureSession = useCallback(async (): Promise<string | null> => {
@@ -262,6 +287,10 @@ export default function StrobeManualPage2() {
       latest?.confidence ?? undefined,
       latest?.nPartials ?? undefined
     );
+    // 피아노 프로필에도 같이 저장 → 다음에 이 피아노를 다시 조율할 때(새 세션)도 이어서 활용
+    if (activeProfileId && bAtConfirm !== undefined) {
+      updateProfileScale(activeProfileId, ki, bAtConfirm, latest?.confidence ?? 0.5, latest?.nPartials ?? 0);
+    }
     toast.success(
       `${PIANO_KEYS[ki].noteName}${PIANO_KEYS[ki].octave} (건반 ${ki + 1}) → ${finalValue > 0 ? "+" : ""}${finalValue.toFixed(1)}¢`,
       { duration: 1800 }
@@ -269,7 +298,7 @@ export default function StrobeManualPage2() {
     setPendingCents(null);
     setTargetOffset(0);
     seq.next();
-  }, [liveCents, displayReadout, seq, ensureSession, recordMeasurement, getBHint]);
+  }, [liveCents, displayReadout, seq, ensureSession, recordMeasurement, getBHint, activeProfileId, updateProfileScale]);
 
   // ── 마이크 토글 (usePitchDetector가 실제 마이크 소유, 스트로브는 같은 analyser 사용) ──
   const toggleListening = async () => {
@@ -361,10 +390,47 @@ export default function StrobeManualPage2() {
           <SectionTabs section={seq.section} onChange={seq.setSection} compact />
         </div>
 
+        {/* ── 피아노 프로필 선택 (세션과 별개 — 이 피아노의 B 학습이 여러 세션에 걸쳐 유지됨) ── */}
+        <div className="relative flex items-center gap-2">
+          <button
+            onClick={() => setShowProfileList(v => !v)}
+            className="flex-1 flex items-center gap-1.5 px-3 py-2 rounded-xl bg-card border border-border text-sm text-foreground/85 hover:text-foreground"
+          >
+            🎹
+            <span className="font-semibold truncate">{activeProfile?.name || "피아노 선택 안 됨"}</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          <button
+            onClick={() => { createProfile(); setShowProfileList(false); }}
+            className="px-3 py-2 text-xs bg-precision text-white rounded-xl font-medium whitespace-nowrap"
+          >
+            + 새 피아노
+          </button>
+          {showProfileList && profiles.length > 0 && (
+            <div className="absolute top-full left-0 mt-1 w-full bg-card border border-border rounded-xl shadow-lg z-20 max-h-48 overflow-y-auto">
+              {profiles.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => { setActiveProfileId(p.id); setShowProfileList(false); }}
+                  className={cn(
+                    "w-full text-left px-3 py-2.5 text-xs hover:bg-muted/50 border-b border-border/40 last:border-0",
+                    p.id === activeProfileId ? "bg-precision/10 text-precision font-bold" : "text-foreground/85"
+                  )}
+                >
+                  <div className="font-medium truncate">{p.name}</div>
+                  <div className="text-muted-foreground/80 mt-0.5">{Object.keys(p.scale).length}건반 학습됨</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* ── 인접건반 누적학습 상태판 (항상 표시 — 시험용2 전용 기능이 실제로 도는지 눈으로 확인용) ── */}
         <div className="rounded-xl border border-precision/30 bg-precision/5 px-3 py-2 space-y-1">
           <div className="flex items-center justify-between text-[11px] font-bold text-precision">
-            <span>🧠 인접건반 인하모니시티(B) 학습 — 시험용2 전용</span>
+            <span>🧠 {activeProfile?.name ?? "피아노"} — 인하모니시티(B) 학습 (시험용2 전용)</span>
             <span>{learnedKeyCount} / 88건반 학습됨</span>
           </div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-foreground/70 font-mono">
