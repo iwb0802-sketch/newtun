@@ -218,13 +218,21 @@ export default function StrobeManualPage2() {
   }, [createSession]);
 
   // ── 확정 ─────────────────────────────────────────────────────────
+  // 매 프레임 갱신되는 engineResult에서 최신 B값을 계속 추적 (엔진 자동확정을 안 기다려도 확정 시점에 바로 씀)
+  const latestBRef = useRef<{ keyIndex: number; B: number | null }>({ keyIndex: -1, B: null });
+  useEffect(() => {
+    if (engineResult) {
+      latestBRef.current = { keyIndex: engineResult.keyIndex, B: engineResult.inharmonicityB };
+    }
+  }, [engineResult]);
+
   const handleConfirm = useCallback(async () => {
     if (liveCents === null) return;
     const finalValue = displayReadout; // 내가 +/- 로 맞춘 값을 그대로 확정
     await ensureSession();
     const ki = seq.targetKeyIndex;
     // 확정 시점 엔진의 인하모니시티(B) 추정값도 같이 저장 → 세션 내 누적학습(인접음 참조)에 사용
-    const bAtConfirm = lastEngineMeta?.keyIndex === ki ? lastEngineMeta?.inharmonicityB ?? undefined : undefined;
+    const bAtConfirm = latestBRef.current.keyIndex === ki ? latestBRef.current.B ?? undefined : undefined;
     recordMeasurement(ki, finalValue, PIANO_KEYS[ki].freq, bAtConfirm ?? undefined);
     toast.success(
       `${PIANO_KEYS[ki].noteName}${PIANO_KEYS[ki].octave} (건반 ${ki + 1}) → ${finalValue > 0 ? "+" : ""}${finalValue.toFixed(1)}¢`,
@@ -233,7 +241,7 @@ export default function StrobeManualPage2() {
     setPendingCents(null);
     setTargetOffset(0);
     seq.next();
-  }, [liveCents, displayReadout, seq, ensureSession, recordMeasurement, lastEngineMeta]);
+  }, [liveCents, displayReadout, seq, ensureSession, recordMeasurement]);
 
   // ── 마이크 토글 (usePitchDetector가 실제 마이크 소유, 스트로브는 같은 analyser 사용) ──
   const toggleListening = async () => {
