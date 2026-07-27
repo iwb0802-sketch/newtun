@@ -533,55 +533,49 @@ export function refineByTWM(
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// ─── 건반별 이론적 인하모니시티(B) 상한 곡선 ─────────────────────────
+// 실측 캘리브레이션 없이도, 일반적인 피아노의 B 분포 경향(저음일수록 크고
+// 중고음으로 갈수록 작아짐, Fletcher & Rossing 등 음향학 문헌 기준 근사치)을
+// 반영해 건반별로 다른 탐색창 상한을 줌. zone 전체에 고정값 하나 쓰던 것보다
+// 배음-피크 매칭 단계의 오매칭(엉뚱한 배음/이웃음 배음을 주워오는 것)을 줄여줌.
+// ─────────────────────────────────────────────────────────────────────
+function estimateBUpperBound(keyIndex: number): number {
+  // 앵커 포인트 (건반 인덱스 0=A0 ~ 87=C8) — 저음에서 크고 중음 지나며 급격히 작아짐
+  if (keyIndex <= 0) return 0.0040;
+  if (keyIndex <= 26) {
+    // A0(0)→D3(26): 0.0040 → 0.0006 지수적으로 감소
+    const t = keyIndex / 26;
+    return 0.0040 * Math.pow(0.0006 / 0.0040, t);
+  }
+  if (keyIndex <= 51) {
+    // D#3(27)→B4(51): 0.0006 → 0.00015
+    const t = (keyIndex - 27) / (51 - 27);
+    return 0.0006 * Math.pow(0.00015 / 0.0006, t);
+  }
+  // 고음(52~87)은 refineByPartialFitV2 자체가 호출 안 되지만, 안전하게 작은 값 반환
+  return 0.0002;
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // ─── Partial-Fit v2 — Rigaud et al. (2013) 스타일 최소자승 인하모니시티 피팅 ──
 // fn = n·f0·√(1+B·n²)  →  (fn/n)² = f0² + (f0²·B)·n²
 // 즉 X=n², Y=(fn/n)² 로 두면 Y = a + b·X 인 "1차 선형회귀" 문제로 바뀜.
 // 배음 주파수 fn들을 스펙트럼에서 찾아 대입하면 최소자승법으로 f0², f0²B가
 // 닫힌 형태(반복 없음)로 바로 나옴 — 격자탐색(grid search)보다 가볍고 정확함.
 // Verituner/TuneLab 등 전문 ETD가 쓰는 것과 같은 계열의 방식.
+//
+// v2.1 개선점:
+//  1) 배음-피크 매칭 탐색창을 zone 고정값 대신 건반별 이론적 B곡선으로 결정
+//     → 저음 안에서도 A0/D3처럼 실제 B가 크게 다른 건반을 더 정확히 구분
+//  2) 1차 회귀 후 잔차(예측 vs 실측, cents)가 큰 이상치 배음을 제외하고
+//     1회 재적합(robust refit) → 오매칭된 배음 1~2개가 전체 회귀를 망치는 것 방지
+//
 // 시험용2 탭 전용 — 기존 refineByTWM/시험용 탭은 변경 없이 그대로 유지.
 // ─────────────────────────────────────────────────────────────────────
-export function refineByPartialFitV2(
-  spectrumDb: Float32Array,
-  sr: number,
-  fftSize: number,
-  f0Guess: number,
-  zone: Zone
-): TWMResult | null {
-  if (f0Guess <= 0) return null;
-
-  // 저음일수록 배음이 더 많이 살아있으므로 더 많은 배음을 활용 (나이퀴스트 한도 내)
-  const maxPartials = zone === "low" ? 14 : zone === "mid" ? 8 : 5;
-  const nyquistCap = Math.floor((sr / 2) / f0Guess);
-  const numPartials = Math.max(2, Math.min(maxPartials, nyquistCap));
-
-  // B가 최대 이 정도까지는 배음을 늘려놓을 수 있다고 가정하고 탐색창을 잡음
-  // (실제 피아노 인하모니시티 범위를 넉넉히 커버)
-  const bMaxAssumed = zone === "low" ? 0.0035 : zone === "mid" ? 0.0010 : 0.0003;
-
-  const peaks = extractPeaks(spectrumDb, sr, fftSize, f0Guess * 0.4, f0Guess * numPartials * 1.8, 30);
-  if (peaks.length < 3) return null;
-
-  // ── 각 배음 번호(n)마다 스펙트럼에서 실제 피크를 찾아 매칭 ──
-  // n번째 배음은 항상 n·f0 이상, n·f0·√(1+bMaxAssumed·n²) 이하 구간에 있음
-  // (인하모니시티는 배음을 위로만 늘리지, 아래로 당기지 않음)
-  const matched: { n: number; freq: number }[] = [];
-  for (let n = 1; n <= numPartials; n++) {
-    const lo = n * f0Guess * 0.995;
-    const hi = n * f0Guess * Math.sqrt(1 + bMaxAssumed * n * n) * 1.02;
-    let best: SpectralPeak | null = null;
-    for (const pk of peaks) {
-      if (pk.freq < lo || pk.freq > hi) continue;
-      if (!best || pk.mag > best.mag) best = pk;
-    }
-    if (best) matched.push({ n, freq: best.freq });
-  }
-  if (matched.length < 3) return null; // 매칭된 배음이 부족하면 신뢰 불가 → 폴백
-
-  // ── 선형회귀: Y = a + b·X,  X = n²,  Y = (freq/n)² ──
-  const N = matched.length;
+function fitLine(points: { n: number; freq: number }[]): { f0: number; B: number } | null {
+  const N = points.length;
   let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-  for (const { n, freq } of matched) {
+  for (const { n, freq } of points) {
     const X = n * n;
     const Y = (freq / n) * (freq / n);
     sumX += X; sumY += Y; sumXY += X * Y; sumXX += X * X;
@@ -595,16 +589,73 @@ export function refineByPartialFitV2(
 
   const f0 = Math.sqrt(a);
   let B = b / a;
-  if (!isFinite(B) || B < 0) B = 0; // 물리적으로 B는 음수가 될 수 없음 → 0으로 클램프
+  if (!isFinite(B) || B < 0) B = 0;
+  return { f0, B };
+}
 
-  // ── 적합도(오차) 계산: 회귀 결과로 예측한 배음 위치 vs 실제 매칭 위치 (cents) ──
+export function refineByPartialFitV2(
+  spectrumDb: Float32Array,
+  sr: number,
+  fftSize: number,
+  f0Guess: number,
+  zone: Zone,
+  keyIndex: number
+): TWMResult | null {
+  if (f0Guess <= 0) return null;
+
+  // 저음일수록 배음이 더 많이 살아있으므로 더 많은 배음을 활용 (나이퀴스트 한도 내)
+  const maxPartials = zone === "low" ? 14 : zone === "mid" ? 8 : 5;
+  const nyquistCap = Math.floor((sr / 2) / f0Guess);
+  const numPartials = Math.max(2, Math.min(maxPartials, nyquistCap));
+
+  // zone 고정값 대신 건반별 이론적 B 상한 사용 (매칭창을 더 정확하게)
+  const bMaxAssumed = estimateBUpperBound(keyIndex);
+
+  const peaks = extractPeaks(spectrumDb, sr, fftSize, f0Guess * 0.4, f0Guess * numPartials * 1.8, 30);
+  if (peaks.length < 3) return null;
+
+  // ── 각 배음 번호(n)마다 스펙트럼에서 실제 피크를 찾아 매칭 ──
+  const matched: { n: number; freq: number }[] = [];
+  for (let n = 1; n <= numPartials; n++) {
+    const lo = n * f0Guess * 0.995;
+    const hi = n * f0Guess * Math.sqrt(1 + bMaxAssumed * n * n) * 1.02;
+    let best: SpectralPeak | null = null;
+    for (const pk of peaks) {
+      if (pk.freq < lo || pk.freq > hi) continue;
+      if (!best || pk.mag > best.mag) best = pk;
+    }
+    if (best) matched.push({ n, freq: best.freq });
+  }
+  if (matched.length < 3) return null; // 매칭된 배음이 부족하면 신뢰 불가 → 폴백
+
+  // ── 1차 선형회귀 ──
+  const fit1 = fitLine(matched);
+  if (!fit1) return null;
+
+  // ── 잔차 계산 후 이상치 제외 → 1회 robust 재적합 ──
+  const residuals = matched.map(({ n, freq }) => {
+    const predicted = n * fit1.f0 * Math.sqrt(1 + fit1.B * n * n);
+    return { pt: { n, freq }, cents: Math.abs(1200 * Math.log2(freq / predicted)) };
+  });
+  const avgResidual = residuals.reduce((s, r) => s + r.cents, 0) / residuals.length;
+  const inlierThresh = Math.max(8, avgResidual * 2.5); // 최소 8¢ 허용, 평균의 2.5배 넘으면 이상치
+  const inliers = residuals.filter(r => r.cents <= inlierThresh).map(r => r.pt);
+
+  let finalF0 = fit1.f0, finalB = fit1.B;
+  if (inliers.length >= 3 && inliers.length < matched.length) {
+    const fit2 = fitLine(inliers);
+    if (fit2) { finalF0 = fit2.f0; finalB = fit2.B; }
+  }
+
+  // ── 최종 적합도(오차) 계산 ──
+  const usedPoints = inliers.length >= 3 ? inliers : matched;
   let errSum = 0;
-  for (const { n, freq } of matched) {
-    const predicted = n * f0 * Math.sqrt(1 + B * n * n);
+  for (const { n, freq } of usedPoints) {
+    const predicted = n * finalF0 * Math.sqrt(1 + finalB * n * n);
     errSum += Math.abs(1200 * Math.log2(freq / predicted));
   }
-  const error = errSum / N;
+  const error = errSum / usedPoints.length;
 
-  return { f0, B, error };
+  return { f0: finalF0, B: finalB, error };
 }
 

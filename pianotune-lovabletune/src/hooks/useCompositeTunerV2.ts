@@ -206,7 +206,7 @@ export function useCompositeTunerV2(
           const fHps = fYinRaw > 0 ? correctOctaveByHPS(fYinRaw, freqBuf, sr, size, ki) : fYinRaw;
           let fFinal = fHps;
           if (fHps > 0 && zone !== "high") {
-            const twm = refineByPartialFitV2(freqBuf, sr, size, fHps, zone);
+            const twm = refineByPartialFitV2(freqBuf, sr, size, fHps, zone, ki);
             if (twm && twm.error < 15) fFinal = twm.f0;
           }
           const yinCents = fFinal > 0 ? yinToCents(fFinal, baseFreq, zone) : null;
@@ -389,7 +389,7 @@ export function useCompositeTunerV2(
         // TWM(Two-Way Mismatch) 정밀화 — f0+인하모니시티 동시 재추정 (고음 제외)
         let fFinal = fYinCorrected;
         if (fYinCorrected > 0 && zone !== "high") {
-          const twm = refineByPartialFitV2(freqBuf, sr, analyser.fftSize, fYinCorrected, zone);
+          const twm = refineByPartialFitV2(freqBuf, sr, analyser.fftSize, fYinCorrected, zone, ki);
           if (twm && twm.error < 15) fFinal = twm.f0;
         }
 
