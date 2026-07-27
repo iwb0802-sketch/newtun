@@ -232,6 +232,7 @@ export default function StrobeManualPage2() {
   // ── 세션 ─────────────────────────────────────────────────────────
   const [showSessionList, setShowSessionList] = useState(false);
   const [showProfileList, setShowProfileList] = useState(false);
+  const [showLearningPanel, setShowLearningPanel] = useState(false);
   const [userName, setUserName] = useState("");
 
   const ensureSession = useCallback(async (): Promise<string | null> => {
@@ -427,42 +428,58 @@ export default function StrobeManualPage2() {
           )}
         </div>
 
-        {/* ── 인접건반 누적학습 상태판 (항상 표시 — 시험용2 전용 기능이 실제로 도는지 눈으로 확인용) ── */}
-        <div className="rounded-xl border border-precision/30 bg-precision/5 px-3 py-2 space-y-1">
-          <div className="flex items-center justify-between text-[11px] font-bold text-precision">
+        {/* ── 인접건반 누적학습 상태판 (기본 접힘 — 헤더 눌러서 필요할 때만 펼침) ── */}
+        <div className="rounded-xl border border-precision/30 bg-precision/5 px-3 py-2">
+          <button
+            onClick={() => setShowLearningPanel(v => !v)}
+            className="w-full flex items-center justify-between text-[11px] font-bold text-precision"
+          >
             <span>🧠 {activeProfile?.name ?? "피아노"} — 인하모니시티(B) 학습 (시험용2 전용)</span>
-            <span>{learnedKeyCount} / 88건반 학습됨</span>
-          </div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-foreground/70 font-mono">
-            <div>
-              지금 이 음 실시간 B:{" "}
-              <span className={cn("font-bold", engineResult?.inharmonicityB != null ? "text-precision" : "text-muted-foreground/50")}>
-                {engineResult?.inharmonicityB != null ? engineResult.inharmonicityB.toFixed(6) : "계산 안됨"}
-              </span>
+            <span className="flex items-center gap-1">
+              {learnedKeyCount} / 88건반 학습됨
+              {anomalyCount > 0 && <span className="text-warn">⚠{anomalyCount}</span>}
+              <svg
+                width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                className={cn("transition-transform", showLearningPanel && "rotate-180")}
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </span>
+          </button>
+          {showLearningPanel && (
+            <div className="space-y-1 mt-2 pt-2 border-t border-precision/20">
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-foreground/70 font-mono">
+                <div>
+                  지금 이 음 실시간 B:{" "}
+                  <span className={cn("font-bold", engineResult?.inharmonicityB != null ? "text-precision" : "text-muted-foreground/50")}>
+                    {engineResult?.inharmonicityB != null ? engineResult.inharmonicityB.toFixed(6) : "계산 안됨"}
+                  </span>
+                </div>
+                <div>
+                  신뢰도:{" "}
+                  <span className="font-bold">
+                    {engineResult?.inharmonicityConfidence != null ? `${Math.round(engineResult.inharmonicityConfidence * 100)}%` : "—"}
+                  </span>
+                  {" "}(배음 {engineResult?.nPartialsUsed ?? "—"}개 사용)
+                </div>
+                <div>
+                  인접학습 예상 B:{" "}
+                  <span className={cn("font-bold", currentBHint !== undefined ? "text-precision" : "text-muted-foreground/50")}>
+                    {currentBHint !== undefined ? currentBHint.toFixed(6) : "데이터 부족"}
+                  </span>
+                </div>
+                <div>
+                  이상 배음 감지:{" "}
+                  <span className={cn("font-bold", anomalyCount > 0 ? "text-warn" : "")}>
+                    {anomalyCount}건
+                  </span>
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground/60 pt-0.5">
+                "지금 이 음 실시간 B"가 계속 값이 나오면 엔진이 정상 작동 중이라는 뜻입니다. 건반을 몇 개 확정할수록 "학습됨" 숫자가 늘고, 그 다음부턴 인접학습 예상 B가 매칭 탐색에 반영됩니다.
+              </p>
             </div>
-            <div>
-              신뢰도:{" "}
-              <span className="font-bold">
-                {engineResult?.inharmonicityConfidence != null ? `${Math.round(engineResult.inharmonicityConfidence * 100)}%` : "—"}
-              </span>
-              {" "}(배음 {engineResult?.nPartialsUsed ?? "—"}개 사용)
-            </div>
-            <div>
-              인접학습 예상 B:{" "}
-              <span className={cn("font-bold", currentBHint !== undefined ? "text-precision" : "text-muted-foreground/50")}>
-                {currentBHint !== undefined ? currentBHint.toFixed(6) : "데이터 부족"}
-              </span>
-            </div>
-            <div>
-              이상 배음 감지:{" "}
-              <span className={cn("font-bold", anomalyCount > 0 ? "text-warn" : "")}>
-                {anomalyCount}건
-              </span>
-            </div>
-          </div>
-          <p className="text-[10px] text-muted-foreground/60 pt-0.5">
-            "지금 이 음 실시간 B"가 계속 값이 나오면 엔진이 정상 작동 중이라는 뜻입니다. 건반을 몇 개 확정할수록 "학습됨" 숫자가 늘고, 그 다음부턴 인접학습 예상 B가 매칭 탐색에 반영됩니다.
-          </p>
+          )}
         </div>
 
         {/* ── 확정 패널 (큰 숫자 = 내가 맞춘 오프셋 + 상태 + 확정/리셋) ── */}
