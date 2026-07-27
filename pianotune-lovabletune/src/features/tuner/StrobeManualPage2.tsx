@@ -233,6 +233,8 @@ export default function StrobeManualPage2() {
   const [showSessionList, setShowSessionList] = useState(false);
   const [showProfileList, setShowProfileList] = useState(false);
   const [showLearningPanel, setShowLearningPanel] = useState(false);
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
   const [userName, setUserName] = useState("");
 
   const ensureSession = useCallback(async (): Promise<string | null> => {
@@ -403,6 +405,17 @@ export default function StrobeManualPage2() {
               <polyline points="6 9 12 15 18 9" />
             </svg>
           </button>
+          {activeProfile && (
+            <button
+              onClick={() => { setEditingProfileId(activeProfile.id); setEditingName(activeProfile.name); setShowProfileList(true); }}
+              className="p-2 rounded-xl bg-card border border-border text-muted-foreground hover:text-precision hover:bg-precision/10"
+              title="피아노 이름 변경"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+              </svg>
+            </button>
+          )}
           <button
             onClick={() => { createProfile(); setShowProfileList(false); }}
             className="px-3 py-2 text-xs bg-precision text-white rounded-xl font-medium whitespace-nowrap"
@@ -410,19 +423,70 @@ export default function StrobeManualPage2() {
             + 새 피아노
           </button>
           {showProfileList && profiles.length > 0 && (
-            <div className="absolute top-full left-0 mt-1 w-full bg-card border border-border rounded-xl shadow-lg z-20 max-h-48 overflow-y-auto">
+            <div className="absolute top-full left-0 mt-1 w-full bg-card border border-border rounded-xl shadow-lg z-20 max-h-56 overflow-y-auto">
               {profiles.map(p => (
-                <button
+                <div
                   key={p.id}
-                  onClick={() => { setActiveProfileId(p.id); setShowProfileList(false); }}
                   className={cn(
-                    "w-full text-left px-3 py-2.5 text-xs hover:bg-muted/50 border-b border-border/40 last:border-0",
-                    p.id === activeProfileId ? "bg-precision/10 text-precision font-bold" : "text-foreground/85"
+                    "w-full flex items-center gap-1 px-3 py-2 text-xs border-b border-border/40 last:border-0",
+                    p.id === activeProfileId ? "bg-precision/10" : ""
                   )}
                 >
-                  <div className="font-medium truncate">{p.name}</div>
-                  <div className="text-muted-foreground/80 mt-0.5">{Object.keys(p.scale).length}건반 학습됨</div>
-                </button>
+                  {editingProfileId === p.id ? (
+                    <>
+                      <input
+                        autoFocus
+                        value={editingName}
+                        onChange={e => setEditingName(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") {
+                            const name = editingName.trim();
+                            if (name) renameProfile(p.id, name);
+                            setEditingProfileId(null);
+                          } else if (e.key === "Escape") {
+                            setEditingProfileId(null);
+                          }
+                        }}
+                        className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-precision/40 bg-background text-xs"
+                      />
+                      <button
+                        onClick={() => {
+                          const name = editingName.trim();
+                          if (name) renameProfile(p.id, name);
+                          setEditingProfileId(null);
+                        }}
+                        className="p-1 text-precision hover:bg-precision/10 rounded"
+                        title="저장"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => { setActiveProfileId(p.id); setShowProfileList(false); }}
+                        className={cn(
+                          "flex-1 min-w-0 text-left",
+                          p.id === activeProfileId ? "text-precision font-bold" : "text-foreground/85"
+                        )}
+                      >
+                        <div className="font-medium truncate">{p.name}</div>
+                        <div className="text-muted-foreground/80 mt-0.5">{Object.keys(p.scale).length}건반 학습됨</div>
+                      </button>
+                      <button
+                        onClick={() => { setEditingProfileId(p.id); setEditingName(p.name); }}
+                        className="p-1.5 text-muted-foreground hover:text-precision hover:bg-precision/10 rounded shrink-0"
+                        title="이름 변경"
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                        </svg>
+                      </button>
+                    </>
+                  )}
+                </div>
               ))}
             </div>
           )}
