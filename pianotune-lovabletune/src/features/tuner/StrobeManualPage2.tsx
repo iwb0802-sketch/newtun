@@ -361,20 +361,43 @@ export default function StrobeManualPage2() {
           <SectionTabs section={seq.section} onChange={seq.setSection} compact />
         </div>
 
-        {/* ── 세션 내 누적학습 상태 (Verituner류 "피아노별 스케일 학습"과 같은 개념) ── */}
-        {learnedKeyCount > 0 && (
-          <div className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-precision/10 border border-precision/20 text-[11px] text-precision">
-            <span>🧠 이 세션에서 학습된 인하모니시티 데이터: {learnedKeyCount}개 건반</span>
-            {currentBHint !== undefined && (
-              <span className="font-mono">이 음 예상 B ≈ {currentBHint.toFixed(5)}</span>
-            )}
+        {/* ── 인접건반 누적학습 상태판 (항상 표시 — 시험용2 전용 기능이 실제로 도는지 눈으로 확인용) ── */}
+        <div className="rounded-xl border border-precision/30 bg-precision/5 px-3 py-2 space-y-1">
+          <div className="flex items-center justify-between text-[11px] font-bold text-precision">
+            <span>🧠 인접건반 인하모니시티(B) 학습 — 시험용2 전용</span>
+            <span>{learnedKeyCount} / 88건반 학습됨</span>
           </div>
-        )}
-        {anomalyCount > 0 && (
-          <div className="flex items-center px-3 py-1.5 rounded-lg bg-warn/10 border border-warn/30 text-[11px] text-warn">
-            ⚠ 예상과 다른 배음 패턴 감지: {anomalyCount}건 (특이 현 상태이거나 오측정 가능성 — 참고용)
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-foreground/70 font-mono">
+            <div>
+              지금 이 음 실시간 B:{" "}
+              <span className={cn("font-bold", engineResult?.inharmonicityB != null ? "text-precision" : "text-muted-foreground/50")}>
+                {engineResult?.inharmonicityB != null ? engineResult.inharmonicityB.toFixed(6) : "계산 안됨"}
+              </span>
+            </div>
+            <div>
+              신뢰도:{" "}
+              <span className="font-bold">
+                {engineResult?.inharmonicityConfidence != null ? `${Math.round(engineResult.inharmonicityConfidence * 100)}%` : "—"}
+              </span>
+              {" "}(배음 {engineResult?.nPartialsUsed ?? "—"}개 사용)
+            </div>
+            <div>
+              인접학습 예상 B:{" "}
+              <span className={cn("font-bold", currentBHint !== undefined ? "text-precision" : "text-muted-foreground/50")}>
+                {currentBHint !== undefined ? currentBHint.toFixed(6) : "데이터 부족"}
+              </span>
+            </div>
+            <div>
+              이상 배음 감지:{" "}
+              <span className={cn("font-bold", anomalyCount > 0 ? "text-warn" : "")}>
+                {anomalyCount}건
+              </span>
+            </div>
           </div>
-        )}
+          <p className="text-[10px] text-muted-foreground/60 pt-0.5">
+            "지금 이 음 실시간 B"가 계속 값이 나오면 엔진이 정상 작동 중이라는 뜻입니다. 건반을 몇 개 확정할수록 "학습됨" 숫자가 늘고, 그 다음부턴 인접학습 예상 B가 매칭 탐색에 반영됩니다.
+          </p>
+        </div>
 
         {/* ── 확정 패널 (큰 숫자 = 내가 맞춘 오프셋 + 상태 + 확정/리셋) ── */}
         <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
