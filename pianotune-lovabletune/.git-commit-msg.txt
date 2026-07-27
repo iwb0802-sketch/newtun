@@ -1,0 +1,11 @@
+feat: 시험용2 - 세션 내 인하모니시티(B) 누적학습 + 인접건반 참조 로직 추가
+
+- KeyMeasurement에 inharmonicityB 필드 추가, recordMeasurement가 선택적으로 B 저장
+- StrobeManualPage2: 세션에 저장된 건반별 B값을 keyIndex 기준 거리가중평균으로 모아
+  '인접 건반 예상 B' 산출 (getBHint, 반경 10건반, 가중치 1/(1+거리))
+- useCompositeTunerV2에 getBHint 콜백 파라미터 추가, refineByPartialFitV2 호출 시
+  세션에서 학습된 B가 있으면 이론곡선보다 우선 사용 (매칭 탐색창 정밀화)
+- CompositeResult에 inharmonicityB 필드 추가 (프레임별 추정 B 노출)
+- 확정(handleConfirm) 시 그 순간 엔진의 B값을 세션에 저장 -> 다음 건반부터 참조 가능
+- UI: '학습된 인하모니시티 데이터 N개 건반 + 이 음 예상 B' 배지 추가
+- 시험용/복합/실험실/자동 탭 영향 없음 (recordMeasurement 4번째 인자는 선택적)

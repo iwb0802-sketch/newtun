@@ -7,7 +7,7 @@
  * - 그래프/세션/내보내기는 하단으로 이동
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { toast as sonnerToast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -63,6 +63,43 @@ export default function StrobeManualPage2() {
   const activeSessionIdRef = useRef(activeSessionId);
   useEffect(() => { activeSessionIdRef.current = activeSessionId; }, [activeSessionId]);
 
+  // ── 세션 내 누적학습: 이미 측정된 건반들의 인하모니시티(B)를 모아
+  // 인접 건반 참고용으로 씀 (Verituner류 ETD의 "피아노별 스케일 학습"과 같은 개념) ──
+  const measuredBMap = useMemo(() => {
+    const m: Record<number, number> = {};
+    if (activeSession) {
+      for (const [k, v] of Object.entries(activeSession.measurements)) {
+        if (v.inharmonicityB !== undefined && v.inharmonicityB !== null) {
+          m[Number(k)] = v.inharmonicityB;
+        }
+      }
+    }
+    return m;
+  }, [activeSession]);
+
+  // 엔진 루프(rAF 클로저)는 최신 렌더를 못 보므로 ref로 최신값 유지
+  const measuredBMapRef = useRef<Record<number, number>>({});
+  useEffect(() => { measuredBMapRef.current = measuredBMap; }, [measuredBMap]);
+
+  // 타겟 건반 근방 이미 측정된 건반들을 거리 가중평균해서 "이 음의 예상 B" 산출
+  const getBHint = useCallback((keyIndex: number): number | undefined => {
+    const map = measuredBMapRef.current;
+    const NEIGHBOR_RANGE = 10;
+    let wsum = 0, vsum = 0;
+    for (let d = -NEIGHBOR_RANGE; d <= NEIGHBOR_RANGE; d++) {
+      const ki = keyIndex + d;
+      const b = map[ki];
+      if (b === undefined) continue;
+      const w = 1 / (1 + Math.abs(d));
+      wsum += w; vsum += w * b;
+    }
+    if (wsum === 0) return undefined;
+    return vsum / wsum;
+  }, []);
+
+  const learnedKeyCount = Object.keys(measuredBMap).length;
+  const currentBHint = getBHint(seq.targetKeyIndex);
+
   // ── 마이크는 usePitchDetector가 소유 (자동판별용, 자동탭과 동일 엔진) ──
   const pitchDetector = usePitchDetector();
 
@@ -82,7 +119,7 @@ export default function StrobeManualPage2() {
     startListening: startStrobeLoop,
     stopListening: stopStrobeLoop,
     error: engineError,
-  } = useCompositeTunerV2(seq.targetKeyIndex, handleEngineConfirmed, pitchDetector.analyserRef);
+  } = useCompositeTunerV2(seq.targetKeyIndex, handleEngineConfirmed, pitchDetector.analyserRef, getBHint);
 
   // 실시간 흐름용 — 교차검증 전이라도 즉시 표시 (YIN 우선, 없으면 Goertzel)
   const liveCentsRaw   = engineResult?.yinCents ?? engineResult?.goertzelCents ?? null;
@@ -186,7 +223,9 @@ export default function StrobeManualPage2() {
     const finalValue = displayReadout; // 내가 +/- 로 맞춘 값을 그대로 확정
     await ensureSession();
     const ki = seq.targetKeyIndex;
-    recordMeasurement(ki, finalValue, PIANO_KEYS[ki].freq);
+    // 확정 시점 엔진의 인하모니시티(B) 추정값도 같이 저장 → 세션 내 누적학습(인접음 참조)에 사용
+    const bAtConfirm = lastEngineMeta?.keyIndex === ki ? lastEngineMeta?.inharmonicityB ?? undefined : undefined;
+    recordMeasurement(ki, finalValue, PIANO_KEYS[ki].freq, bAtConfirm ?? undefined);
     toast.success(
       `${PIANO_KEYS[ki].noteName}${PIANO_KEYS[ki].octave} (건반 ${ki + 1}) → ${finalValue > 0 ? "+" : ""}${finalValue.toFixed(1)}¢`,
       { duration: 1800 }
@@ -194,7 +233,7 @@ export default function StrobeManualPage2() {
     setPendingCents(null);
     setTargetOffset(0);
     seq.next();
-  }, [liveCents, displayReadout, seq, ensureSession, recordMeasurement]);
+  }, [liveCents, displayReadout, seq, ensureSession, recordMeasurement, lastEngineMeta]);
 
   // ── 마이크 토글 (usePitchDetector가 실제 마이크 소유, 스트로브는 같은 analyser 사용) ──
   const toggleListening = async () => {
@@ -285,6 +324,16 @@ export default function StrobeManualPage2() {
           />
           <SectionTabs section={seq.section} onChange={seq.setSection} compact />
         </div>
+
+        {/* ── 세션 내 누적학습 상태 (Verituner류 "피아노별 스케일 학습"과 같은 개념) ── */}
+        {learnedKeyCount > 0 && (
+          <div className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-precision/10 border border-precision/20 text-[11px] text-precision">
+            <span>🧠 이 세션에서 학습된 인하모니시티 데이터: {learnedKeyCount}개 건반</span>
+            {currentBHint !== undefined && (
+              <span className="font-mono">이 음 예상 B ≈ {currentBHint.toFixed(5)}</span>
+            )}
+          </div>
+        )}
 
         {/* ── 확정 패널 (큰 숫자 = 내가 맞춘 오프셋 + 상태 + 확정/리셋) ── */}
         <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">

@@ -599,7 +599,8 @@ export function refineByPartialFitV2(
   fftSize: number,
   f0Guess: number,
   zone: Zone,
-  keyIndex: number
+  keyIndex: number,
+  bHint?: number // 세션 내 이웃 건반들에서 누적학습된 B 기대값 (있으면 이론곡선보다 우선)
 ): TWMResult | null {
   if (f0Guess <= 0) return null;
 
@@ -609,7 +610,11 @@ export function refineByPartialFitV2(
   const numPartials = Math.max(2, Math.min(maxPartials, nyquistCap));
 
   // zone 고정값 대신 건반별 이론적 B 상한 사용 (매칭창을 더 정확하게)
-  const bMaxAssumed = estimateBUpperBound(keyIndex);
+  // 세션 내 이웃 건반들에서 학습된 B 기대값이 있으면 그걸 우선 사용 (여유마진 1.8배),
+  // 없으면 88건반 이론적 B 상한 곡선으로 폴백
+  const bMaxAssumed = bHint !== undefined && bHint > 0
+    ? Math.max(bHint * 1.8, estimateBUpperBound(keyIndex) * 0.25)
+    : estimateBUpperBound(keyIndex);
 
   const peaks = extractPeaks(spectrumDb, sr, fftSize, f0Guess * 0.4, f0Guess * numPartials * 1.8, 30);
   if (peaks.length < 3) return null;
