@@ -39,6 +39,7 @@ export default function PTStrobePanel({
   const rafRef = useRef<number | null>(null);
   const lastTsRef = useRef<number | null>(null);
   const centsRef = useRef<number | null>(null);
+  const smoothedSpeedRef = useRef(0); // 감지 프레임이 뜸해도(≈매 100ms) 속도가 뚝뚝 끊기지 않게 프레임마다 서서히 수렴
 
   useEffect(() => {
     centsRef.current = stableCents ?? detectedCents;
@@ -66,7 +67,12 @@ export default function PTStrobePanel({
 
       const cents = isActive ? centsRef.current : null;
       const locked = cents !== null && Math.abs(cents) <= LOCK_THRESHOLD;
-      const speed = cents !== null && !locked ? cents * SPEED_PX_PER_CENT : 0;
+      const targetSpeed = cents !== null && !locked ? cents * SPEED_PX_PER_CENT : 0;
+      // 목표 속도로 즉시 점프하지 않고 60fps 프레임마다 조금씩 수렴 -> 감지결과가
+      // 뜸하게(예: 100ms마다) 들어와도 화면상 스크롤은 매끄럽게 가속/감속하는 것처럼 보임
+      const speedLerp = 1 - Math.pow(0.001, dt); // dt에 비례한 수렴율 (프레임레이트 무관하게 일정한 반응속도)
+      smoothedSpeedRef.current += (targetSpeed - smoothedSpeedRef.current) * speedLerp;
+      const speed = smoothedSpeedRef.current;
       phaseRef.current += speed * dt;
 
       const w = canvas.width, h = canvas.height, scale = dpr;
