@@ -396,10 +396,22 @@ export default function StrobeManualPage2() {
 
         {/* ── 확정 패널 (큰 숫자 = 내가 맞춘 오프셋 + 상태 + 확정/리셋) ── */}
         <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
-          <div className="px-5 pt-3 flex items-center gap-1.5">
-            <span className="text-[10px] text-muted-foreground/70">
-              스트로브가 <span className="text-off font-bold">빨강(음 낮음)</span>이면 빨간 버튼(–), <span className="font-bold">회색(음 높음)</span>이면 회색 버튼(+)을 눌러 멈추는 지점을 찾으세요
-            </span>
+          <div className="px-5 pt-3 flex items-center justify-between gap-1.5">
+            <span className="text-[10px] text-muted-foreground/60">예측값</span>
+            <button
+              onClick={() => { if (liveCents !== null) setTargetOffset(Math.round(liveCents * 10) / 10); }}
+              disabled={liveCents === null}
+              className={cn(
+                "text-sm font-bold tabular-nums px-2 py-0.5 rounded-lg transition-colors",
+                liveCents !== null
+                  ? "text-precision hover:bg-precision/10 cursor-pointer"
+                  : "text-muted-foreground/40 cursor-not-allowed"
+              )}
+              style={{ fontFamily: "'JetBrains Mono', monospace" }}
+              title="눌러서 이 값을 바로 반영"
+            >
+              {liveCents !== null ? `${liveCents > 0 ? "+" : ""}${liveCents.toFixed(1)}¢` : "—"}
+            </button>
           </div>
           <div className="px-5 pt-2 pb-2 flex items-end justify-between">
             <div>
