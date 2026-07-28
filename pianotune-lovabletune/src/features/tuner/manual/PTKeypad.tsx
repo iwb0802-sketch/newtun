@@ -17,6 +17,8 @@ interface PTKeypadProps {
   onReset: () => void;
   onNudge: (deltaCents: number) => void;
   autoMode: boolean;
+  /** true면 빨강/회색 구분 없이 전부 빨강 톤으로 통일 (오리지널 PT-100 스타일) */
+  monochromeRed?: boolean;
 }
 
 function DigitKey({ digit, letter, onClick, active }: { digit: string; letter?: string; onClick?: () => void; active?: boolean }) {
@@ -61,7 +63,7 @@ function FuncKey({ label, sub, onClick, active, span, tone }: {
   );
 }
 
-export default function PTKeypad({ onJumpToNote, onAutoToggle, onReset, onNudge, autoMode }: PTKeypadProps) {
+export default function PTKeypad({ onJumpToNote, onAutoToggle, onReset, onNudge, autoMode, monochromeRed = false }: PTKeypadProps) {
   const [pendingNote, setPendingNote] = useState<string | null>(null);
   const [shift, setShift] = useState<0 | 1 | -1>(0);
   const [octaveMode, setOctaveMode] = useState(false);
@@ -138,15 +140,15 @@ export default function PTKeypad({ onJumpToNote, onAutoToggle, onReset, onNudge,
         <DigitKey digit="4" letter="F" onClick={() => handleNoteKey("F")} active={pendingNote === "F"} />
         <DigitKey digit="5" letter="G" onClick={() => handleNoteKey("G")} active={pendingNote === "G"} />
         <DigitKey digit="6" letter="A" onClick={() => handleNoteKey("A")} active={pendingNote === "A"} />
-        <FuncKey label="-10" sub="빨강 누르기" tone="red" onClick={() => onNudge(-10)} />
-        <FuncKey label="+10" sub="회색 누르기" tone="gray" onClick={() => onNudge(10)} />
+        <FuncKey label="-10" sub={monochromeRed ? undefined : "빨강 누르기"} tone="red" onClick={() => onNudge(-10)} />
+        <FuncKey label="+10" sub={monochromeRed ? undefined : "회색 누르기"} tone={monochromeRed ? "red" : "gray"} onClick={() => onNudge(10)} />
 
         {/* Row 3: 1/C  2/D  3/E  –  + */}
         <DigitKey digit="1" letter="C" onClick={() => handleNoteKey("C")} active={pendingNote === "C"} />
         <DigitKey digit="2" letter="D" onClick={() => handleNoteKey("D")} active={pendingNote === "D"} />
         <DigitKey digit="3" letter="E" onClick={() => handleNoteKey("E")} active={pendingNote === "E"} />
-        <FuncKey label="–" sub="빨강 누르기" tone="red" onClick={() => onNudge(-1)} />
-        <FuncKey label="+" sub="회색 누르기" tone="gray" onClick={() => onNudge(1)} />
+        <FuncKey label="–" sub={monochromeRed ? undefined : "빨강 누르기"} tone="red" onClick={() => onNudge(-1)} />
+        <FuncKey label="+" sub={monochromeRed ? undefined : "회색 누르기"} tone={monochromeRed ? "red" : "gray"} onClick={() => onNudge(1)} />
 
         {/* Row 4: 0/OCT  REVERSE(span2)  STEP(span2) */}
         <DigitKey digit="0" letter="OCT" onClick={pendingNote ? openOctave : undefined} active={false} />

@@ -18,6 +18,8 @@ interface PTStrobePanelProps {
   pitchA4?: number;          // 440
   /** LCD의 CENT 칸에 표시할 값 (영점 방식용) — 없으면 detectedCents/stableCents 사용 */
   readoutCents?: number | null;
+  /** true면 회색(샾) 구분 없이 전부 빨강으로 통일 (오리지널 PT-100 스타일) */
+  monochromeRed?: boolean;
 }
 
 const LOCK_THRESHOLD = 0.5; // 반올림해서 0으로 보일 때만 LOCKED(초록)
@@ -32,14 +34,19 @@ const CHUNK_FRAC = 0.62;   // 한 주기(덩어리+여백) 중 덩어리가 차�
 export default function PTStrobePanel({
   detectedCents, stableCents, isActive,
   noteName, octave, keyNumber, curveLabel = "FLAT", pitchA4 = 440,
-  readoutCents,
+  readoutCents, monochromeRed = false,
 }: PTStrobePanelProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const phaseRef = useRef(0);
   const rafRef = useRef<number | null>(null);
   const lastTsRef = useRef<number | null>(null);
   const centsRef = useRef<number | null>(null);
+  const monochromeRedRef = useRef(monochromeRed);
   const smoothedSpeedRef = useRef(0); // 감지 프레임이 뜸해도(≈매 100ms) 속도가 뚝뚝 끊기지 않게 프레임마다 서서히 수렴
+
+  useEffect(() => {
+    monochromeRedRef.current = monochromeRed;
+  }, [monochromeRed]);
 
   useEffect(() => {
     centsRef.current = stableCents ?? detectedCents;
@@ -83,7 +90,8 @@ export default function PTStrobePanel({
 
       const segFull = (SEG_W + SEG_GAP) * scale;
       // 음이 떨어짐(flat, 음수) = 빨강 / 음이 높음(sharp, 양수) = 회색 / 정확(LOCKED) = 초록
-      const isFlat = cents !== null && cents < 0;
+      // monochromeRed 모드(오리지널 PT-100 스타일)에서는 회색 구분 없이 항상 빨강으로 통일
+      const isFlat = monochromeRedRef.current ? true : cents !== null && cents < 0;
       const litColor = locked ? "#22d36b" : isFlat ? "#ff2d2d" : "#9ca3af";
       const glowColor = locked ? "rgba(34,211,107,0.6)" : isFlat ? "rgba(255,45,45,0.6)" : "rgba(156,163,175,0.6)";
 

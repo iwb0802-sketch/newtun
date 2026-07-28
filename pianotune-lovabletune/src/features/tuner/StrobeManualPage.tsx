@@ -341,13 +341,12 @@ export default function StrobeManualPage() {
             </svg>
           </div>
           <div>
-            <h1 className="text-base font-bold text-foreground leading-tight">시험용</h1>
-            <p className="text-xs text-muted-foreground/80">PT-100 스타일 · 다중배음 최소자승 인하모니시티 피팅(Rigaud 방식)</p>
+            <h1 className="text-base font-bold text-foreground leading-tight">시험용(구버전)</h1>
           </div>
         </div>
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
-          <span                        className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">시험용</span>
-          <Link to="/strobe-manual-2" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">시험용2</Link>
+          <span                        className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">시험용(구버전)</span>
+          <Link to="/strobe-manual-2" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">시험용(신버전)</Link>
         </nav>
       </header>
 
@@ -365,6 +364,7 @@ export default function StrobeManualPage() {
             keyNumber={targetKey.keyNumber}
             curveLabel="FLAT"
             pitchA4={440}
+            monochromeRed
           />
           <PTKeypad
             onJumpToNote={handleJumpToNote}
@@ -372,6 +372,7 @@ export default function StrobeManualPage() {
             onReset={handleReset}
             onNudge={handleNudge}
             autoMode={autoMode}
+            monochromeRed
           />
         </div>
 
