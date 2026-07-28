@@ -24,12 +24,10 @@ const LOCK_THRESHOLD = 0.5; // 반올림해서 0으로 보일 때만 LOCKED(초�
 const SEG_W = 3;
 const SEG_GAP = 2;
 const SPEED_PX_PER_CENT = 2.4;
-// 오리지널 PT-100처럼 화면 전체를 채우는 줄무늬가 아니라, 폭이 넓은 덩어리 몇 개가
-// 사이사이 빈 공간을 두고 늘어서 있는 형태 (각 덩어리 내부는 가는 선들이 촘촘히 흐름)
-const NUM_CLUSTERS = 5;
-const CLUSTER_WIDTH_FRAC = 0.15; // 바 전체 폭 대비 덩어리 하나의 폭 비율 (길게)
-const PATTERN_LEN = 5; // 덩어리 내부에서 켜짐/꺼짐이 반복되는 주기 (이게 있어야 옆으로 흐르는 것처럼 보임)
-const LIT_COUNT = 2;   // PATTERN_LEN 중 몇 개를 켜진 상태로 볼지
+// 오리지널 PT-100처럼: 폭이 넓은 덩어리 5개가 "고정된 창을 통해 보이는" 게 아니라
+// 덩어리 자체가 통째로 옆으로 흐르며 지나감 (반복주기=한 덩어리+한 여백, 그 반복 전체가 스크롤됨)
+const NUM_CHUNKS = 5;      // 화면에 동시에 보이는 덩어리 개수
+const CHUNK_FRAC = 0.62;   // 한 주기(덩어리+여백) 중 덩어리가 차지하는 비율 (길게)
 
 export default function PTStrobePanel({
   detectedCents, stableCents, isActive,
@@ -83,30 +81,23 @@ export default function PTStrobePanel({
       const litColor = locked ? "#22d36b" : isFlat ? "#ff2d2d" : "#9ca3af";
       const glowColor = locked ? "rgba(34,211,107,0.6)" : isFlat ? "rgba(255,45,45,0.6)" : "rgba(156,163,175,0.6)";
 
-      // 오리지널 PT-100처럼: 폭이 넓은 덩어리 5개가 사이 여백을 두고 늘어서 있고,
-      // 그 안에서 가는 선들이 촘촘히 좌우로 흐름 (전체를 꽉 채우는 줄무늬가 아님)
-      const clusterW = w * CLUSTER_WIDTH_FRAC;
-      const totalClusterW = clusterW * NUM_CLUSTERS;
-      const totalGap = w - totalClusterW;
-      const marginGap = totalGap / (NUM_CLUSTERS + 1);
-      const clusterRanges: Array<[number, number]> = [];
-      for (let c = 0; c < NUM_CLUSTERS; c++) {
-        const start = marginGap * (c + 1) + clusterW * c;
-        clusterRanges.push([start, start + clusterW]);
-      }
-      const isInsideCluster = (x: number) => clusterRanges.some(([lo, hi]) => x >= lo && x < hi);
+      // 오리지널 PT-100처럼: 폭 넓은 덩어리(+그 사이 여백)를 하나의 반복주기로 놓고,
+      // 그 반복주기 전체가 옆으로 흐름 — 고정된 창을 통해 보는 게 아니라 덩어리 자체가 이동함
+      const periodPx = w / NUM_CHUNKS;               // 화면에 5주기가 보이도록
+      const periodSegs = Math.max(2, Math.round(periodPx / segFull));
+      const litSegs = Math.max(1, Math.round(periodSegs * CHUNK_FRAC));
 
-      const segCount = Math.ceil(w / segFull) + PATTERN_LEN;
+      const segCount = Math.ceil(w / segFull) + periodSegs;
       const offsetSeg = (phaseRef.current * scale) / segFull;
 
-      for (let i = -PATTERN_LEN; i < segCount; i++) {
+      for (let i = -periodSegs; i < segCount; i++) {
         const segIndex = Math.floor(i - offsetSeg);
-        const mod = (((segIndex % PATTERN_LEN) + PATTERN_LEN) % PATTERN_LEN);
-        const lit = mod < LIT_COUNT;
+        const mod = (((segIndex % periodSegs) + periodSegs) % periodSegs);
+        const lit = mod < litSegs;
+        if (!lit) continue; // 여백 구간
+
         const x = i * segFull - ((offsetSeg % 1) * segFull) - segFull;
         if (x > w || x + SEG_W * scale < 0) continue;
-        if (!isInsideCluster(x)) continue; // 덩어리 사이 여백 구간은 그리지 않음
-        if (!lit) continue; // 켜짐/꺼짐 패턴이 흐르면서 안쪽 무늬가 옆으로 이동하는 것처럼 보이게 함
 
         if (!isActive || cents === null) {
           ctx.shadowBlur = 0;
