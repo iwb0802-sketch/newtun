@@ -396,26 +396,6 @@ export default function StrobeManualPage2() {
 
         {/* ── 확정 패널 (큰 숫자 = 내가 맞춘 오프셋 + 상태 + 확정/리셋) ── */}
         <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
-          <div className="px-5 pt-3 flex items-center justify-between gap-1.5">
-            <div className="flex flex-col leading-tight">
-              <span className="text-xs font-bold text-foreground/80">예측값</span>
-              <span className="text-[9px] text-muted-foreground/60">클릭 시 반영</span>
-            </div>
-            <button
-              onClick={() => { if (liveCents !== null) setTargetOffset(Math.round(liveCents * 10) / 10); }}
-              disabled={liveCents === null}
-              className={cn(
-                "text-sm font-bold tabular-nums px-2 py-0.5 rounded-lg transition-colors",
-                liveCents !== null
-                  ? "text-precision hover:bg-precision/10 cursor-pointer"
-                  : "text-muted-foreground/40 cursor-not-allowed"
-              )}
-              style={{ fontFamily: "'JetBrains Mono', monospace" }}
-              title="눌러서 이 값을 바로 반영"
-            >
-              {liveCents !== null ? `${liveCents > 0 ? "+" : ""}${liveCents.toFixed(1)}¢` : "—"}
-            </button>
-          </div>
           <div className="px-5 pt-2 pb-2 flex items-end justify-between">
             <div>
               <span
@@ -439,9 +419,28 @@ export default function StrobeManualPage2() {
                   : liveCents !== null ? "● 스트로브 흐르는 중"
                   : "대기 중"}
               </span>
-              {strobeCents !== null && (
-                <span className="text-[10px] text-muted-foreground/70">자동측정: {strobeCents > 0 ? "+" : ""}{strobeCents.toFixed(1)}¢</span>
-              )}
+              <button
+                onClick={() => { if (liveCents !== null) setTargetOffset(Math.round(liveCents * 10) / 10); }}
+                disabled={liveCents === null}
+                className={cn(
+                  "flex items-center gap-1 text-right rounded-lg px-1.5 py-0.5 transition-colors",
+                  liveCents !== null ? "hover:bg-precision/10 cursor-pointer" : "cursor-not-allowed"
+                )}
+                title="눌러서 이 값을 바로 반영"
+              >
+                <span className="text-[9px] text-muted-foreground/60 leading-tight">
+                  예측값<br />클릭 시 반영
+                </span>
+                <span
+                  className={cn(
+                    "text-xs font-bold tabular-nums",
+                    liveCents !== null ? "text-precision" : "text-muted-foreground/40"
+                  )}
+                  style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                >
+                  {liveCents !== null ? `${liveCents > 0 ? "+" : ""}${liveCents.toFixed(1)}¢` : "—"}
+                </span>
+              </button>
               {autoMode && (
                 <span className="text-[10px] font-bold text-in-tune bg-in-tune/10 px-1.5 py-0.5 rounded-full">AUTO 추적 중</span>
               )}
