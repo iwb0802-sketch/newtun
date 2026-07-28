@@ -346,11 +346,8 @@ export default function StrobeManualPage2() {
           </div>
         </div>
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
-          <Link to="/"              className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">자동</Link>
           <Link to="/strobe-manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">시험용</Link>
           <span                     className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">시험용2</span>
-          <Link to="/manual"        className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">복합</Link>
-          <Link to="/pitch-lab"     className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">실험실</Link>
         </nav>
       </header>
 
@@ -704,7 +701,7 @@ export default function StrobeManualPage2() {
             onClick={() => setShowLearningPanel(v => !v)}
             className="w-full flex items-center justify-between text-[11px] font-bold text-precision"
           >
-            <span>🧠 {activeProfile?.name ?? "피아노"} — 인하모니시티(B) 학습 (시험용2 전용)</span>
+            <span>🧠 {activeProfile?.name ?? "피아노"} — 인하모니시티(B) 학습</span>
             <span className="flex items-center gap-1">
               {learnedKeyCount} / 88건반 학습됨
               {anomalyCount > 0 && <span className="text-warn">⚠{anomalyCount}</span>}

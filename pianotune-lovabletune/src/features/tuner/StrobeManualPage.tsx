@@ -7,14 +7,15 @@
  * - 그래프/세션/내보내기는 하단으로 이동
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { toast as sonnerToast } from "sonner";
 import { cn } from "@/lib/utils";
 import { PIANO_KEYS, usePitchDetector } from "@/hooks/usePitchDetector";
-import { useCompositeTuner, CompositeResult } from "@/hooks/useCompositeTuner";
+import { useCompositeTunerV2, CompositeResult } from "@/hooks/useCompositeTunerV2";
 import { median } from "@/lib/tuner/pitchEngine";
 import { useTuningSession } from "@/hooks/useTuningSession";
+import { usePianoProfiles } from "@/hooks/usePianoProfiles";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
@@ -26,6 +27,7 @@ import PTStrobePanel from "@/components/tuner/PTStrobePanel";
 import SpectrumGraph from "@/components/tuner/SpectrumGraph";
 import TuningCurveChart from "@/components/tuner/TuningCurveChart";
 import { exportToPdf, exportToImage } from "@/lib/tuner/exportPdf";
+import { predictB, anomalyRatio, type BPoint } from "@/features/tuner/manual/scaleLearning";
 
 const toast = Object.assign(
   (msg: string, opts?: { duration?: number }) => sonnerToast(msg, opts),
@@ -60,8 +62,66 @@ export default function StrobeManualPage() {
     chartData, measuredCount,
   } = useTuningSession(null);
 
+  // ── 피아노별 저장 프로필: 세션(1회 조율)과 별개로, 같은 피아노는 여러 세션에
+  // 걸쳐 인하모니시티(B) 학습 데이터가 영구적으로 이어지도록 함 ──
+  const {
+    profiles, activeProfile, activeProfileId, setActiveProfileId,
+    createProfile, renameProfile, updateProfileScale,
+  } = usePianoProfiles(null);
+  const profileAutoCreatedRef = useRef(false);
+  useEffect(() => {
+    if (!profileAutoCreatedRef.current && profiles.length === 0) {
+      profileAutoCreatedRef.current = true;
+      createProfile("피아노 1");
+    }
+  }, [profiles.length, createProfile]);
+
   const activeSessionIdRef = useRef(activeSessionId);
   useEffect(() => { activeSessionIdRef.current = activeSessionId; }, [activeSessionId]);
+
+  // ── 피아노 프로필 누적학습: "이 피아노"에 대해 여러 세션에 걸쳐 쌓인 인하모니시티(B)를
+  // 인접 건반 참고용으로 씀 (Verituner류 ETD의 "피아노별 스케일 학습"과 같은 개념).
+  // 프로필이 아직 없으면(과도기) 현재 세션 자체 측정값으로 폴백. ──
+  const measuredBPoints: BPoint[] = useMemo(() => {
+    const pts: BPoint[] = [];
+    if (activeProfile) {
+      for (const entry of Object.values(activeProfile.scale)) {
+        if (entry.B > 0) {
+          pts.push({ keyIndex: entry.keyIndex, B: entry.B, confidence: entry.confidence });
+        }
+      }
+      return pts;
+    }
+    if (activeSession) {
+      for (const [k, v] of Object.entries(activeSession.measurements)) {
+        if (v.inharmonicityB !== undefined && v.inharmonicityB !== null && v.inharmonicityB > 0) {
+          pts.push({
+            keyIndex: Number(k),
+            B: v.inharmonicityB,
+            confidence: v.inharmonicityConfidence ?? 0.6, // 옛 데이터(신뢰도 없음)는 중간값 취급
+          });
+        }
+      }
+    }
+    return pts;
+  }, [activeProfile, activeSession]);
+
+  // 엔진 루프(rAF 클로저)는 최신 렌더를 못 보므로 ref로 최신값 유지
+  const measuredBPointsRef = useRef<BPoint[]>([]);
+  useEffect(() => { measuredBPointsRef.current = measuredBPoints; }, [measuredBPoints]);
+
+  // 타겟 건반 근방의 학습 데이터로 "이 음의 예상 B" 산출
+  // (로그공간 가중회귀 + 브레이크포인트 감지 + 신뢰도 가중 — scaleLearning.ts)
+  const getBHint = useCallback((keyIndex: number): number | undefined => {
+    return predictB(measuredBPointsRef.current, keyIndex);
+  }, []);
+
+  const learnedKeyCount = measuredBPoints.length;
+  const currentBHint = getBHint(seq.targetKeyIndex);
+
+  // ── 이례적 배음 패턴 감지 (예측 B vs 실측 B가 크게 다른 경우) ──
+  const ANOMALY_THRESHOLD = 0.4; // 40% 이상 벗어나면 알림
+  const [anomalyCount, setAnomalyCount] = useState(0);
 
   // ── 마이크는 usePitchDetector가 소유 (자동판별용, 자동탭과 동일 엔진) ──
   const pitchDetector = usePitchDetector();
@@ -82,7 +142,7 @@ export default function StrobeManualPage() {
     startListening: startStrobeLoop,
     stopListening: stopStrobeLoop,
     error: engineError,
-  } = useCompositeTuner(seq.targetKeyIndex, handleEngineConfirmed, pitchDetector.analyserRef);
+  } = useCompositeTunerV2(seq.targetKeyIndex, handleEngineConfirmed, pitchDetector.analyserRef, getBHint);
 
   // 실시간 흐름용 — 교차검증 전이라도 즉시 표시 (YIN 우선, 없으면 Goertzel)
   const liveCentsRaw   = engineResult?.yinCents ?? engineResult?.goertzelCents ?? null;
@@ -171,6 +231,10 @@ export default function StrobeManualPage() {
 
   // ── 세션 ─────────────────────────────────────────────────────────
   const [showSessionList, setShowSessionList] = useState(false);
+  const [showProfileList, setShowProfileList] = useState(false);
+  const [showLearningPanel, setShowLearningPanel] = useState(false);
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
   const [userName, setUserName] = useState("");
 
   const ensureSession = useCallback(async (): Promise<string | null> => {
@@ -181,12 +245,55 @@ export default function StrobeManualPage() {
   }, [createSession]);
 
   // ── 확정 ─────────────────────────────────────────────────────────
+  // 매 프레임 갱신되는 engineResult에서 최신 B/신뢰도값을 계속 추적 (엔진 자동확정을 안 기다려도 확정 시점에 바로 씀)
+  const latestBRef = useRef<{ keyIndex: number; B: number | null; confidence: number | null; nPartials: number | null }>(
+    { keyIndex: -1, B: null, confidence: null, nPartials: null }
+  );
+  useEffect(() => {
+    if (engineResult) {
+      latestBRef.current = {
+        keyIndex: engineResult.keyIndex,
+        B: engineResult.inharmonicityB,
+        confidence: engineResult.inharmonicityConfidence,
+        nPartials: engineResult.nPartialsUsed,
+      };
+    }
+  }, [engineResult]);
+
   const handleConfirm = useCallback(async () => {
     if (liveCents === null) return;
     const finalValue = displayReadout; // 내가 +/- 로 맞춘 값을 그대로 확정
     await ensureSession();
     const ki = seq.targetKeyIndex;
-    recordMeasurement(ki, finalValue, PIANO_KEYS[ki].freq);
+    const latest = latestBRef.current.keyIndex === ki ? latestBRef.current : null;
+    const bAtConfirm = latest?.B ?? undefined;
+
+    // ── 이례적 배음 패턴 감지: 인접음 예측 B와 실측 B가 크게 다르면 부드럽게 알림 + 기록 ──
+    if (bAtConfirm !== undefined) {
+      const predicted = getBHint(ki);
+      if (predicted !== undefined) {
+        const ratio = anomalyRatio(predicted, bAtConfirm);
+        if (ratio > ANOMALY_THRESHOLD) {
+          setAnomalyCount(c => c + 1);
+          toast(
+            `⚠ 건반 ${ki + 1}: 예상과 다른 배음 패턴 감지 (예상 B ${predicted.toFixed(5)} vs 측정 B ${bAtConfirm.toFixed(5)})`,
+            { duration: 3000 }
+          );
+        }
+      }
+    }
+
+    // 확정 시점 엔진의 인하모니시티(B)/신뢰도/사용배음수도 같이 저장 → 세션 내 누적학습(인접음 참조)에 사용
+    recordMeasurement(
+      ki, finalValue, PIANO_KEYS[ki].freq,
+      bAtConfirm ?? undefined,
+      latest?.confidence ?? undefined,
+      latest?.nPartials ?? undefined
+    );
+    // 피아노 프로필에도 같이 저장 → 다음에 이 피아노를 다시 조율할 때(새 세션)도 이어서 활용
+    if (activeProfileId && bAtConfirm !== undefined) {
+      updateProfileScale(activeProfileId, ki, bAtConfirm, latest?.confidence ?? 0.5, latest?.nPartials ?? 0);
+    }
     toast.success(
       `${PIANO_KEYS[ki].noteName}${PIANO_KEYS[ki].octave} (건반 ${ki + 1}) → ${finalValue > 0 ? "+" : ""}${finalValue.toFixed(1)}¢`,
       { duration: 1800 }
@@ -194,7 +301,7 @@ export default function StrobeManualPage() {
     setPendingCents(null);
     setTargetOffset(0);
     seq.next();
-  }, [liveCents, displayReadout, seq, ensureSession, recordMeasurement]);
+  }, [liveCents, displayReadout, seq, ensureSession, recordMeasurement, getBHint, activeProfileId, updateProfileScale]);
 
   // ── 마이크 토글 (usePitchDetector가 실제 마이크 소유, 스트로브는 같은 analyser 사용) ──
   const toggleListening = async () => {
@@ -235,15 +342,12 @@ export default function StrobeManualPage() {
           </div>
           <div>
             <h1 className="text-base font-bold text-foreground leading-tight">시험용</h1>
-            <p className="text-xs text-muted-foreground/80">PT-100 스타일 · 키패드로 건반 직접 선택</p>
+            <p className="text-xs text-muted-foreground/80">PT-100 스타일 · 다중배음 최소자승 인하모니시티 피팅(Rigaud 방식)</p>
           </div>
         </div>
         <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
-          <Link to="/"       className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">자동</Link>
-          <span              className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">시험용</span>
+          <span                        className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">시험용</span>
           <Link to="/strobe-manual-2" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">시험용2</Link>
-          <Link to="/manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">복합</Link>
-          <Link to="/pitch-lab" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">실험실</Link>
         </nav>
       </header>
 
@@ -286,13 +390,9 @@ export default function StrobeManualPage() {
           <SectionTabs section={seq.section} onChange={seq.setSection} compact />
         </div>
 
+
         {/* ── 확정 패널 (큰 숫자 = 내가 맞춘 오프셋 + 상태 + 확정/리셋) ── */}
         <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
-          <div className="px-5 pt-3 flex items-center gap-1.5">
-            <span className="text-[10px] text-muted-foreground/70">
-              스트로브가 <span className="text-off font-bold">빨강(음 낮음)</span>이면 빨간 버튼(–), <span className="font-bold">회색(음 높음)</span>이면 회색 버튼(+)을 눌러 멈추는 지점을 찾으세요
-            </span>
-          </div>
           <div className="px-5 pt-2 pb-2 flex items-end justify-between">
             <div>
               <span
@@ -316,9 +416,28 @@ export default function StrobeManualPage() {
                   : liveCents !== null ? "● 스트로브 흐르는 중"
                   : "대기 중"}
               </span>
-              {strobeCents !== null && (
-                <span className="text-[10px] text-muted-foreground/70">자동측정: {strobeCents > 0 ? "+" : ""}{strobeCents.toFixed(1)}¢</span>
-              )}
+              <button
+                onClick={() => { if (liveCents !== null) setTargetOffset(Math.round(liveCents * 10) / 10); }}
+                disabled={liveCents === null}
+                className={cn(
+                  "flex items-center gap-1 text-right rounded-lg px-1.5 py-0.5 transition-colors",
+                  liveCents !== null ? "hover:bg-precision/10 cursor-pointer" : "cursor-not-allowed"
+                )}
+                title="눌러서 이 값을 바로 반영"
+              >
+                <span className="text-[9px] text-muted-foreground/60 leading-tight">
+                  예측값<br />클릭 시 반영
+                </span>
+                <span
+                  className={cn(
+                    "text-xs font-bold tabular-nums",
+                    liveCents !== null ? "text-precision" : "text-muted-foreground/40"
+                  )}
+                  style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                >
+                  {liveCents !== null ? `${liveCents > 0 ? "+" : ""}${liveCents.toFixed(1)}¢` : "—"}
+                </span>
+              </button>
               {autoMode && (
                 <span className="text-[10px] font-bold text-in-tune bg-in-tune/10 px-1.5 py-0.5 rounded-full">AUTO 추적 중</span>
               )}
@@ -476,6 +595,159 @@ export default function StrobeManualPage() {
           </div>
         </div>
 
+
+        {/* ── 피아노 프로필 선택 (세션과 별개 — 이 피아노의 B 학습이 여러 세션에 걸쳐 유지됨) ── */}
+        <div className="relative flex items-center gap-2">
+          <button
+            onClick={() => setShowProfileList(v => !v)}
+            className="flex-1 flex items-center gap-1.5 px-3 py-2 rounded-xl bg-card border border-border text-sm text-foreground/85 hover:text-foreground"
+          >
+            🎹
+            <span className="font-semibold truncate">{activeProfile?.name || "피아노 선택 안 됨"}</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          {activeProfile && (
+            <button
+              onClick={() => { setEditingProfileId(activeProfile.id); setEditingName(activeProfile.name); setShowProfileList(true); }}
+              className="p-2 rounded-xl bg-card border border-border text-muted-foreground hover:text-precision hover:bg-precision/10"
+              title="피아노 이름 변경"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+              </svg>
+            </button>
+          )}
+          <button
+            onClick={() => { createProfile(); setShowProfileList(false); }}
+            className="px-3 py-2 text-xs bg-precision text-white rounded-xl font-medium whitespace-nowrap"
+          >
+            + 새 피아노
+          </button>
+          {showProfileList && profiles.length > 0 && (
+            <div className="absolute top-full left-0 mt-1 w-full bg-card border border-border rounded-xl shadow-lg z-20 max-h-56 overflow-y-auto">
+              {profiles.map(p => (
+                <div
+                  key={p.id}
+                  className={cn(
+                    "w-full flex items-center gap-1 px-3 py-2 text-xs border-b border-border/40 last:border-0",
+                    p.id === activeProfileId ? "bg-precision/10" : ""
+                  )}
+                >
+                  {editingProfileId === p.id ? (
+                    <>
+                      <input
+                        autoFocus
+                        value={editingName}
+                        onChange={e => setEditingName(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") {
+                            const name = editingName.trim();
+                            if (name) renameProfile(p.id, name);
+                            setEditingProfileId(null);
+                          } else if (e.key === "Escape") {
+                            setEditingProfileId(null);
+                          }
+                        }}
+                        className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-precision/40 bg-background text-xs"
+                      />
+                      <button
+                        onClick={() => {
+                          const name = editingName.trim();
+                          if (name) renameProfile(p.id, name);
+                          setEditingProfileId(null);
+                        }}
+                        className="p-1 text-precision hover:bg-precision/10 rounded"
+                        title="저장"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => { setActiveProfileId(p.id); setShowProfileList(false); }}
+                        className={cn(
+                          "flex-1 min-w-0 text-left",
+                          p.id === activeProfileId ? "text-precision font-bold" : "text-foreground/85"
+                        )}
+                      >
+                        <div className="font-medium truncate">{p.name}</div>
+                        <div className="text-muted-foreground/80 mt-0.5">{Object.keys(p.scale).length}건반 학습됨</div>
+                      </button>
+                      <button
+                        onClick={() => { setEditingProfileId(p.id); setEditingName(p.name); }}
+                        className="p-1.5 text-muted-foreground hover:text-precision hover:bg-precision/10 rounded shrink-0"
+                        title="이름 변경"
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                        </svg>
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── 인접건반 누적학습 상태판 (기본 접힘 — 헤더 눌러서 필요할 때만 펼침) ── */}
+        <div className="rounded-xl border border-precision/30 bg-precision/5 px-3 py-2">
+          <button
+            onClick={() => setShowLearningPanel(v => !v)}
+            className="w-full flex items-center justify-between text-[11px] font-bold text-precision"
+          >
+            <span>🧠 {activeProfile?.name ?? "피아노"} — 인하모니시티(B) 학습</span>
+            <span className="flex items-center gap-1">
+              {learnedKeyCount} / 88건반 학습됨
+              {anomalyCount > 0 && <span className="text-warn">⚠{anomalyCount}</span>}
+              <svg
+                width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                className={cn("transition-transform", showLearningPanel && "rotate-180")}
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </span>
+          </button>
+          {showLearningPanel && (
+            <div className="space-y-1 mt-2 pt-2 border-t border-precision/20">
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-foreground/70 font-mono">
+                <div>
+                  지금 이 음 실시간 B:{" "}
+                  <span className={cn("font-bold", engineResult?.inharmonicityB != null ? "text-precision" : "text-muted-foreground/50")}>
+                    {engineResult?.inharmonicityB != null ? engineResult.inharmonicityB.toFixed(6) : "계산 안됨"}
+                  </span>
+                </div>
+                <div>
+                  신뢰도:{" "}
+                  <span className="font-bold">
+                    {engineResult?.inharmonicityConfidence != null ? `${Math.round(engineResult.inharmonicityConfidence * 100)}%` : "—"}
+                  </span>
+                  {" "}(배음 {engineResult?.nPartialsUsed ?? "—"}개 사용)
+                </div>
+                <div>
+                  인접학습 예상 B:{" "}
+                  <span className={cn("font-bold", currentBHint !== undefined ? "text-precision" : "text-muted-foreground/50")}>
+                    {currentBHint !== undefined ? currentBHint.toFixed(6) : "데이터 부족"}
+                  </span>
+                </div>
+                <div>
+                  이상 배음 감지:{" "}
+                  <span className={cn("font-bold", anomalyCount > 0 ? "text-warn" : "")}>
+                    {anomalyCount}건
+                  </span>
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground/60 pt-0.5">
+                "지금 이 음 실시간 B"가 계속 값이 나오면 엔진이 정상 작동 중이라는 뜻입니다. 건반을 몇 개 확정할수록 "학습됨" 숫자가 늘고, 그 다음부턴 인접학습 예상 B가 매칭 탐색에 반영됩니다.
+              </p>
+            </div>
+          )}
+        </div>
       </main>
     </div>
   );
