@@ -24,9 +24,10 @@ const LOCK_THRESHOLD = 0.5; // 반올림해서 0으로 보일 때만 LOCKED(초�
 const SEG_W = 3;
 const SEG_GAP = 2;
 const SPEED_PX_PER_CENT = 2.4;
-// 오리지널 PT-100처럼 화면 전체를 채우는 줄무늬가 아니라, 8칸짜리 빛 뭉치 하나가
-// 대부분 비어있는(어두운) 바 위를 좌우로 흐르는 형태
-const NUM_CELLS = 8;
+// 오리지널 PT-100처럼 화면 전체를 채우는 줄무늬가 아니라, 폭이 넓은 덩어리 몇 개가
+// 사이사이 빈 공간을 두고 늘어서 있는 형태 (각 덩어리 내부는 가는 선들이 촘촘히 흐름)
+const NUM_CLUSTERS = 5;
+const CLUSTER_WIDTH_FRAC = 0.15; // 바 전체 폭 대비 덩어리 하나의 폭 비율 (길게)
 
 export default function PTStrobePanel({
   detectedCents, stableCents, isActive,
@@ -80,18 +81,26 @@ export default function PTStrobePanel({
       const litColor = locked ? "#22d36b" : isFlat ? "#ff2d2d" : "#9ca3af";
       const glowColor = locked ? "rgba(34,211,107,0.6)" : isFlat ? "rgba(255,45,45,0.6)" : "rgba(156,163,175,0.6)";
 
-      // 오리지널 PT-100처럼: 바 전체가 대부분 비어있고(어두움), 8칸짜리 빛 뭉치 하나만
-      // 좌우로 흐르며 지나감 (연속 줄무늬로 화면을 꽉 채우지 않음)
-      const clusterWidth = NUM_CELLS * segFull;
-      const travel = w + clusterWidth; // 화면 밖에서 들어와서 화면 밖으로 완전히 나갈 때까지의 거리
-      const rawOffset = phaseRef.current * scale;
-      const clusterStartX = (isActive && cents !== null)
-        ? (((rawOffset % travel) + travel) % travel) - clusterWidth
-        : (w - clusterWidth) / 2; // 비활성/무음 상태에선 화면 밖으로 사라지지 않게 가운데에 고정 표시
+      // 오리지널 PT-100처럼: 폭이 넓은 덩어리 5개가 사이 여백을 두고 늘어서 있고,
+      // 그 안에서 가는 선들이 촘촘히 좌우로 흐름 (전체를 꽉 채우는 줄무늬가 아님)
+      const clusterW = w * CLUSTER_WIDTH_FRAC;
+      const totalClusterW = clusterW * NUM_CLUSTERS;
+      const totalGap = w - totalClusterW;
+      const marginGap = totalGap / (NUM_CLUSTERS + 1);
+      const clusterRanges: Array<[number, number]> = [];
+      for (let c = 0; c < NUM_CLUSTERS; c++) {
+        const start = marginGap * (c + 1) + clusterW * c;
+        clusterRanges.push([start, start + clusterW]);
+      }
+      const isInsideCluster = (x: number) => clusterRanges.some(([lo, hi]) => x >= lo && x < hi);
 
-      for (let s = 0; s < NUM_CELLS; s++) {
-        const x = clusterStartX + s * segFull;
+      const segCount = Math.ceil(w / segFull) + 4;
+      const offsetSeg = (phaseRef.current * scale) / segFull;
+
+      for (let i = -4; i < segCount; i++) {
+        const x = i * segFull - ((offsetSeg % 1) * segFull) - segFull;
         if (x > w || x + SEG_W * scale < 0) continue;
+        if (!isInsideCluster(x)) continue; // 덩어리 사이 여백 구간은 그리지 않음
 
         if (!isActive || cents === null) {
           ctx.shadowBlur = 0;
