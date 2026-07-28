@@ -393,158 +393,6 @@ export default function StrobeManualPage2() {
           <SectionTabs section={seq.section} onChange={seq.setSection} compact />
         </div>
 
-        {/* ── 피아노 프로필 선택 (세션과 별개 — 이 피아노의 B 학습이 여러 세션에 걸쳐 유지됨) ── */}
-        <div className="relative flex items-center gap-2">
-          <button
-            onClick={() => setShowProfileList(v => !v)}
-            className="flex-1 flex items-center gap-1.5 px-3 py-2 rounded-xl bg-card border border-border text-sm text-foreground/85 hover:text-foreground"
-          >
-            🎹
-            <span className="font-semibold truncate">{activeProfile?.name || "피아노 선택 안 됨"}</span>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-          {activeProfile && (
-            <button
-              onClick={() => { setEditingProfileId(activeProfile.id); setEditingName(activeProfile.name); setShowProfileList(true); }}
-              className="p-2 rounded-xl bg-card border border-border text-muted-foreground hover:text-precision hover:bg-precision/10"
-              title="피아노 이름 변경"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-              </svg>
-            </button>
-          )}
-          <button
-            onClick={() => { createProfile(); setShowProfileList(false); }}
-            className="px-3 py-2 text-xs bg-precision text-white rounded-xl font-medium whitespace-nowrap"
-          >
-            + 새 피아노
-          </button>
-          {showProfileList && profiles.length > 0 && (
-            <div className="absolute top-full left-0 mt-1 w-full bg-card border border-border rounded-xl shadow-lg z-20 max-h-56 overflow-y-auto">
-              {profiles.map(p => (
-                <div
-                  key={p.id}
-                  className={cn(
-                    "w-full flex items-center gap-1 px-3 py-2 text-xs border-b border-border/40 last:border-0",
-                    p.id === activeProfileId ? "bg-precision/10" : ""
-                  )}
-                >
-                  {editingProfileId === p.id ? (
-                    <>
-                      <input
-                        autoFocus
-                        value={editingName}
-                        onChange={e => setEditingName(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === "Enter") {
-                            const name = editingName.trim();
-                            if (name) renameProfile(p.id, name);
-                            setEditingProfileId(null);
-                          } else if (e.key === "Escape") {
-                            setEditingProfileId(null);
-                          }
-                        }}
-                        className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-precision/40 bg-background text-xs"
-                      />
-                      <button
-                        onClick={() => {
-                          const name = editingName.trim();
-                          if (name) renameProfile(p.id, name);
-                          setEditingProfileId(null);
-                        }}
-                        className="p-1 text-precision hover:bg-precision/10 rounded"
-                        title="저장"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => { setActiveProfileId(p.id); setShowProfileList(false); }}
-                        className={cn(
-                          "flex-1 min-w-0 text-left",
-                          p.id === activeProfileId ? "text-precision font-bold" : "text-foreground/85"
-                        )}
-                      >
-                        <div className="font-medium truncate">{p.name}</div>
-                        <div className="text-muted-foreground/80 mt-0.5">{Object.keys(p.scale).length}건반 학습됨</div>
-                      </button>
-                      <button
-                        onClick={() => { setEditingProfileId(p.id); setEditingName(p.name); }}
-                        className="p-1.5 text-muted-foreground hover:text-precision hover:bg-precision/10 rounded shrink-0"
-                        title="이름 변경"
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                        </svg>
-                      </button>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* ── 인접건반 누적학습 상태판 (기본 접힘 — 헤더 눌러서 필요할 때만 펼침) ── */}
-        <div className="rounded-xl border border-precision/30 bg-precision/5 px-3 py-2">
-          <button
-            onClick={() => setShowLearningPanel(v => !v)}
-            className="w-full flex items-center justify-between text-[11px] font-bold text-precision"
-          >
-            <span>🧠 {activeProfile?.name ?? "피아노"} — 인하모니시티(B) 학습 (시험용2 전용)</span>
-            <span className="flex items-center gap-1">
-              {learnedKeyCount} / 88건반 학습됨
-              {anomalyCount > 0 && <span className="text-warn">⚠{anomalyCount}</span>}
-              <svg
-                width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                className={cn("transition-transform", showLearningPanel && "rotate-180")}
-              >
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </span>
-          </button>
-          {showLearningPanel && (
-            <div className="space-y-1 mt-2 pt-2 border-t border-precision/20">
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-foreground/70 font-mono">
-                <div>
-                  지금 이 음 실시간 B:{" "}
-                  <span className={cn("font-bold", engineResult?.inharmonicityB != null ? "text-precision" : "text-muted-foreground/50")}>
-                    {engineResult?.inharmonicityB != null ? engineResult.inharmonicityB.toFixed(6) : "계산 안됨"}
-                  </span>
-                </div>
-                <div>
-                  신뢰도:{" "}
-                  <span className="font-bold">
-                    {engineResult?.inharmonicityConfidence != null ? `${Math.round(engineResult.inharmonicityConfidence * 100)}%` : "—"}
-                  </span>
-                  {" "}(배음 {engineResult?.nPartialsUsed ?? "—"}개 사용)
-                </div>
-                <div>
-                  인접학습 예상 B:{" "}
-                  <span className={cn("font-bold", currentBHint !== undefined ? "text-precision" : "text-muted-foreground/50")}>
-                    {currentBHint !== undefined ? currentBHint.toFixed(6) : "데이터 부족"}
-                  </span>
-                </div>
-                <div>
-                  이상 배음 감지:{" "}
-                  <span className={cn("font-bold", anomalyCount > 0 ? "text-warn" : "")}>
-                    {anomalyCount}건
-                  </span>
-                </div>
-              </div>
-              <p className="text-[10px] text-muted-foreground/60 pt-0.5">
-                "지금 이 음 실시간 B"가 계속 값이 나오면 엔진이 정상 작동 중이라는 뜻입니다. 건반을 몇 개 확정할수록 "학습됨" 숫자가 늘고, 그 다음부턴 인접학습 예상 B가 매칭 탐색에 반영됩니다.
-              </p>
-            </div>
-          )}
-        </div>
 
         {/* ── 확정 패널 (큰 숫자 = 내가 맞춘 오프셋 + 상태 + 확정/리셋) ── */}
         <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
@@ -736,6 +584,159 @@ export default function StrobeManualPage2() {
           </div>
         </div>
 
+
+        {/* ── 피아노 프로필 선택 (세션과 별개 — 이 피아노의 B 학습이 여러 세션에 걸쳐 유지됨) ── */}
+        <div className="relative flex items-center gap-2">
+          <button
+            onClick={() => setShowProfileList(v => !v)}
+            className="flex-1 flex items-center gap-1.5 px-3 py-2 rounded-xl bg-card border border-border text-sm text-foreground/85 hover:text-foreground"
+          >
+            🎹
+            <span className="font-semibold truncate">{activeProfile?.name || "피아노 선택 안 됨"}</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          {activeProfile && (
+            <button
+              onClick={() => { setEditingProfileId(activeProfile.id); setEditingName(activeProfile.name); setShowProfileList(true); }}
+              className="p-2 rounded-xl bg-card border border-border text-muted-foreground hover:text-precision hover:bg-precision/10"
+              title="피아노 이름 변경"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+              </svg>
+            </button>
+          )}
+          <button
+            onClick={() => { createProfile(); setShowProfileList(false); }}
+            className="px-3 py-2 text-xs bg-precision text-white rounded-xl font-medium whitespace-nowrap"
+          >
+            + 새 피아노
+          </button>
+          {showProfileList && profiles.length > 0 && (
+            <div className="absolute top-full left-0 mt-1 w-full bg-card border border-border rounded-xl shadow-lg z-20 max-h-56 overflow-y-auto">
+              {profiles.map(p => (
+                <div
+                  key={p.id}
+                  className={cn(
+                    "w-full flex items-center gap-1 px-3 py-2 text-xs border-b border-border/40 last:border-0",
+                    p.id === activeProfileId ? "bg-precision/10" : ""
+                  )}
+                >
+                  {editingProfileId === p.id ? (
+                    <>
+                      <input
+                        autoFocus
+                        value={editingName}
+                        onChange={e => setEditingName(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") {
+                            const name = editingName.trim();
+                            if (name) renameProfile(p.id, name);
+                            setEditingProfileId(null);
+                          } else if (e.key === "Escape") {
+                            setEditingProfileId(null);
+                          }
+                        }}
+                        className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-precision/40 bg-background text-xs"
+                      />
+                      <button
+                        onClick={() => {
+                          const name = editingName.trim();
+                          if (name) renameProfile(p.id, name);
+                          setEditingProfileId(null);
+                        }}
+                        className="p-1 text-precision hover:bg-precision/10 rounded"
+                        title="저장"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => { setActiveProfileId(p.id); setShowProfileList(false); }}
+                        className={cn(
+                          "flex-1 min-w-0 text-left",
+                          p.id === activeProfileId ? "text-precision font-bold" : "text-foreground/85"
+                        )}
+                      >
+                        <div className="font-medium truncate">{p.name}</div>
+                        <div className="text-muted-foreground/80 mt-0.5">{Object.keys(p.scale).length}건반 학습됨</div>
+                      </button>
+                      <button
+                        onClick={() => { setEditingProfileId(p.id); setEditingName(p.name); }}
+                        className="p-1.5 text-muted-foreground hover:text-precision hover:bg-precision/10 rounded shrink-0"
+                        title="이름 변경"
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                        </svg>
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── 인접건반 누적학습 상태판 (기본 접힘 — 헤더 눌러서 필요할 때만 펼침) ── */}
+        <div className="rounded-xl border border-precision/30 bg-precision/5 px-3 py-2">
+          <button
+            onClick={() => setShowLearningPanel(v => !v)}
+            className="w-full flex items-center justify-between text-[11px] font-bold text-precision"
+          >
+            <span>🧠 {activeProfile?.name ?? "피아노"} — 인하모니시티(B) 학습 (시험용2 전용)</span>
+            <span className="flex items-center gap-1">
+              {learnedKeyCount} / 88건반 학습됨
+              {anomalyCount > 0 && <span className="text-warn">⚠{anomalyCount}</span>}
+              <svg
+                width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                className={cn("transition-transform", showLearningPanel && "rotate-180")}
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </span>
+          </button>
+          {showLearningPanel && (
+            <div className="space-y-1 mt-2 pt-2 border-t border-precision/20">
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-foreground/70 font-mono">
+                <div>
+                  지금 이 음 실시간 B:{" "}
+                  <span className={cn("font-bold", engineResult?.inharmonicityB != null ? "text-precision" : "text-muted-foreground/50")}>
+                    {engineResult?.inharmonicityB != null ? engineResult.inharmonicityB.toFixed(6) : "계산 안됨"}
+                  </span>
+                </div>
+                <div>
+                  신뢰도:{" "}
+                  <span className="font-bold">
+                    {engineResult?.inharmonicityConfidence != null ? `${Math.round(engineResult.inharmonicityConfidence * 100)}%` : "—"}
+                  </span>
+                  {" "}(배음 {engineResult?.nPartialsUsed ?? "—"}개 사용)
+                </div>
+                <div>
+                  인접학습 예상 B:{" "}
+                  <span className={cn("font-bold", currentBHint !== undefined ? "text-precision" : "text-muted-foreground/50")}>
+                    {currentBHint !== undefined ? currentBHint.toFixed(6) : "데이터 부족"}
+                  </span>
+                </div>
+                <div>
+                  이상 배음 감지:{" "}
+                  <span className={cn("font-bold", anomalyCount > 0 ? "text-warn" : "")}>
+                    {anomalyCount}건
+                  </span>
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground/60 pt-0.5">
+                "지금 이 음 실시간 B"가 계속 값이 나오면 엔진이 정상 작동 중이라는 뜻입니다. 건반을 몇 개 확정할수록 "학습됨" 숫자가 늘고, 그 다음부턴 인접학습 예상 B가 매칭 탐색에 반영됩니다.
+              </p>
+            </div>
+          )}
+        </div>
       </main>
     </div>
   );
