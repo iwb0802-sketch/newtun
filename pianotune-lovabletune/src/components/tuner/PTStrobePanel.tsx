@@ -26,6 +26,9 @@ const SEG_GAP = 2;
 const PATTERN_LEN = 5;
 const LIT_COUNT = 2;
 const SPEED_PX_PER_CENT = 2.4;
+// 오리지널 PT-100처럼 연속된 줄무늬가 아니라, 8개 블록으로 끊어서 사이 여백을 넓게 둠
+const NUM_CELLS = 8;
+const CELL_GAP_FRAC = 0.35; // 전체 폭 중 여백(칸 사이 + 양끝)에 쓰는 비율
 
 export default function PTStrobePanel({
   detectedCents, stableCents, isActive,
@@ -81,12 +84,24 @@ export default function PTStrobePanel({
       const segCount = Math.ceil(w / segFull) + PATTERN_LEN;
       const offsetSeg = (phaseRef.current * scale) / segFull;
 
+      // 오리지널처럼 8개 블록 + 사이 여백으로 끊어서 보여줌 (연속 줄무늬 대신 "창문으로 들여다보는" 느낌)
+      const totalGap = w * CELL_GAP_FRAC;
+      const marginGap = totalGap / (NUM_CELLS + 1);
+      const cellW = (w - totalGap) / NUM_CELLS;
+      const cellRanges: Array<[number, number]> = [];
+      for (let c = 0; c < NUM_CELLS; c++) {
+        const cellStart = marginGap * (c + 1) + cellW * c;
+        cellRanges.push([cellStart, cellStart + cellW]);
+      }
+      const isInsideCell = (x: number) => cellRanges.some(([lo, hi]) => x >= lo && x < hi);
+
       for (let i = -PATTERN_LEN; i < segCount; i++) {
         const segIndex = Math.floor(i - offsetSeg);
         const mod = (((segIndex % PATTERN_LEN) + PATTERN_LEN) % PATTERN_LEN);
         const lit = mod < LIT_COUNT;
         const x = i * segFull - ((offsetSeg % 1) * segFull) - segFull;
         if (x > w || x + SEG_W * scale < 0) continue;
+        if (!isInsideCell(x)) continue; // 블록 사이 여백 구간은 그리지 않음
 
         if (!isActive) {
           ctx.shadowBlur = 0;
