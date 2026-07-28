@@ -23,12 +23,10 @@ interface PTStrobePanelProps {
 const LOCK_THRESHOLD = 0.5; // 반올림해서 0으로 보일 때만 LOCKED(초록)
 const SEG_W = 3;
 const SEG_GAP = 2;
-const PATTERN_LEN = 5;
-const LIT_COUNT = 2;
 const SPEED_PX_PER_CENT = 2.4;
-// 오리지널 PT-100처럼 연속된 줄무늬가 아니라, 8개 블록으로 끊어서 사이 여백을 넓게 둠
+// 오리지널 PT-100처럼 화면 전체를 채우는 줄무늬가 아니라, 8칸짜리 빛 뭉치 하나가
+// 대부분 비어있는(어두운) 바 위를 좌우로 흐르는 형태
 const NUM_CELLS = 8;
-const CELL_GAP_FRAC = 0.35; // 전체 폭 중 여백(칸 사이 + 양끝)에 쓰는 비율
 
 export default function PTStrobePanel({
   detectedCents, stableCents, isActive,
@@ -81,38 +79,27 @@ export default function PTStrobePanel({
       const isFlat = cents !== null && cents < 0;
       const litColor = locked ? "#22d36b" : isFlat ? "#ff2d2d" : "#9ca3af";
       const glowColor = locked ? "rgba(34,211,107,0.6)" : isFlat ? "rgba(255,45,45,0.6)" : "rgba(156,163,175,0.6)";
-      const segCount = Math.ceil(w / segFull) + PATTERN_LEN;
-      const offsetSeg = (phaseRef.current * scale) / segFull;
 
-      // 오리지널처럼 8개 블록 + 사이 여백으로 끊어서 보여줌 (연속 줄무늬 대신 "창문으로 들여다보는" 느낌)
-      const totalGap = w * CELL_GAP_FRAC;
-      const marginGap = totalGap / (NUM_CELLS + 1);
-      const cellW = (w - totalGap) / NUM_CELLS;
-      const cellRanges: Array<[number, number]> = [];
-      for (let c = 0; c < NUM_CELLS; c++) {
-        const cellStart = marginGap * (c + 1) + cellW * c;
-        cellRanges.push([cellStart, cellStart + cellW]);
-      }
-      const isInsideCell = (x: number) => cellRanges.some(([lo, hi]) => x >= lo && x < hi);
+      // 오리지널 PT-100처럼: 바 전체가 대부분 비어있고(어두움), 8칸짜리 빛 뭉치 하나만
+      // 좌우로 흐르며 지나감 (연속 줄무늬로 화면을 꽉 채우지 않음)
+      const clusterWidth = NUM_CELLS * segFull;
+      const travel = w + clusterWidth; // 화면 밖에서 들어와서 화면 밖으로 완전히 나갈 때까지의 거리
+      const rawOffset = phaseRef.current * scale;
+      const clusterStartX = (isActive && cents !== null)
+        ? (((rawOffset % travel) + travel) % travel) - clusterWidth
+        : (w - clusterWidth) / 2; // 비활성/무음 상태에선 화면 밖으로 사라지지 않게 가운데에 고정 표시
 
-      for (let i = -PATTERN_LEN; i < segCount; i++) {
-        const segIndex = Math.floor(i - offsetSeg);
-        const mod = (((segIndex % PATTERN_LEN) + PATTERN_LEN) % PATTERN_LEN);
-        const lit = mod < LIT_COUNT;
-        const x = i * segFull - ((offsetSeg % 1) * segFull) - segFull;
+      for (let s = 0; s < NUM_CELLS; s++) {
+        const x = clusterStartX + s * segFull;
         if (x > w || x + SEG_W * scale < 0) continue;
-        if (!isInsideCell(x)) continue; // 블록 사이 여백 구간은 그리지 않음
 
-        if (!isActive) {
+        if (!isActive || cents === null) {
           ctx.shadowBlur = 0;
           ctx.fillStyle = "rgba(140,140,140,0.20)";
-        } else if (lit) {
+        } else {
           ctx.shadowColor = glowColor;
           ctx.shadowBlur = 7 * scale;
           ctx.fillStyle = litColor;
-        } else {
-          ctx.shadowBlur = 0;
-          ctx.fillStyle = "rgba(140,140,140,0.20)";
         }
         ctx.fillRect(x, h * 0.15, SEG_W * scale, h * 0.7);
       }
