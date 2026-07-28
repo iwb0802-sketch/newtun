@@ -60,6 +60,7 @@ export interface UsePitchDetectorReturn {
 
 // ── 상수 ─────────────────────────────────────────────────────────────
 const MIN_RMS    = 0.005;  // useStrobeDetector와 동일
+const ATTACK_RATIO = 1.6;  // 이전 프레임보다 이 비율 이상 커지면 새 타건(어택)으로 간주
 const WINDOW     = 8;      // 슬라이딩 윈도우 크기
 const MIN_MATCH  = 4;      // 안정화 최소 일치
 
@@ -83,6 +84,7 @@ export function usePitchDetector(
   // 안정화 버퍼
   const recentKeys  = useRef<number[]>([]);
   const recentCents = useRef<number[]>([]);
+  const lastRmsRef  = useRef(0); // 어택(새 타건) 감지용 — 이전 프레임 RMS
 
   // onPitchDetected ref (클로저 stale 방지)
   const onPitchRef = useRef(onPitchDetected);
@@ -117,10 +119,20 @@ export function usePitchDetector(
       if (rms < MIN_RMS) {
         recentKeys.current = [];
         recentCents.current = [];
+        lastRmsRef.current = 0;
         setCurrentPitch(null);
         rafRef.current = requestAnimationFrame(detect);
         return;
       }
+
+      // 어택 감지: 이전 프레임보다 RMS가 갑자기 확 커지면 "새로 친 음"으로 간주하고
+      // 슬라이딩 윈도우를 강제로 비움 — 이전 음의 잔향/서스테인이 남아있어도(완전 무음이
+      // 아니어도) 새 음을 다수결 버퍼가 밀어내길 기다리지 않고 즉시 새로 판별 시작
+      if (rms > lastRmsRef.current * ATTACK_RATIO && rms > MIN_RMS * 3) {
+        recentKeys.current = [];
+        recentCents.current = [];
+      }
+      lastRmsRef.current = rms;
 
       const sampleRate = analyser.context?.sampleRate ?? 48000;
 
