@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { toast as sonnerToast } from "sonner";
 import { cn } from "@/lib/utils";
 import { PIANO_KEYS, usePitchDetector } from "@/hooks/usePitchDetector";
@@ -51,8 +51,21 @@ function noteToKeyIndex(letter: string, octave: number, shift: number): number |
 }
 
 export default function StrobeManualPage() {
-  const { user } = useAuth();
+  const { user, loading: authLoading, signOut } = useAuth();
   const { isPro } = useUserRole(user?.id);
+  const navigate = useNavigate();
+
+  // 로그아웃 상태로 직접 진입/전환되면 로그인 화면(랜딩)으로 이동
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate({ to: "/" });
+    }
+  }, [authLoading, user, navigate]);
+
+  const handleSignOut = useCallback(async () => {
+    await signOut();
+    navigate({ to: "/" });
+  }, [signOut, navigate]);
 
   const seq = useManualSequence();
 
@@ -344,10 +357,23 @@ export default function StrobeManualPage() {
             <h1 className="text-base font-bold text-foreground leading-tight">시험용(구버전)</h1>
           </div>
         </div>
-        <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
-          <span                        className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">시험용(구버전)</span>
-          <Link to="/strobe-manual-2" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">시험용(신버전)</Link>
-        </nav>
+        <div className="flex items-center gap-2">
+          <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
+            <span                        className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">시험용(구버전)</span>
+            <Link to="/strobe-manual-2" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">시험용(신버전)</Link>
+          </nav>
+          <button
+            onClick={handleSignOut}
+            title="로그아웃"
+            className="flex items-center justify-center w-8 h-8 rounded-lg text-muted-foreground hover:text-off hover:bg-off/10 transition-colors"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </button>
+        </div>
       </header>
 
       <main className="flex-1 container max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
