@@ -359,8 +359,8 @@ export default function StrobeManualPage2() {
         </div>
         <div className="flex items-center gap-2">
           <nav className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
-            <Link to="/strobe-manual" className="px-3 py-1 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors">시험용(구버전)</Link>
-            <span                     className="px-3 py-1 text-xs font-bold rounded-md bg-card text-primary shadow-sm">시험용(신버전)</span>
+            <Link to="/strobe-manual" className="px-2.5 py-1 text-[11px] font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap leading-none">시험용(구버전)</Link>
+            <span                     className="px-2.5 py-1 text-[11px] font-bold rounded-md bg-card text-primary shadow-sm whitespace-nowrap leading-none">시험용(신버전)</span>
           </nav>
           <button
             onClick={handleSignOut}
