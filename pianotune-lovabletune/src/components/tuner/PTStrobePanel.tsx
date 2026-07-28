@@ -28,6 +28,8 @@ const SPEED_PX_PER_CENT = 2.4;
 // 사이사이 빈 공간을 두고 늘어서 있는 형태 (각 덩어리 내부는 가는 선들이 촘촘히 흐름)
 const NUM_CLUSTERS = 5;
 const CLUSTER_WIDTH_FRAC = 0.15; // 바 전체 폭 대비 덩어리 하나의 폭 비율 (길게)
+const PATTERN_LEN = 5; // 덩어리 내부에서 켜짐/꺼짐이 반복되는 주기 (이게 있어야 옆으로 흐르는 것처럼 보임)
+const LIT_COUNT = 2;   // PATTERN_LEN 중 몇 개를 켜진 상태로 볼지
 
 export default function PTStrobePanel({
   detectedCents, stableCents, isActive,
@@ -94,13 +96,17 @@ export default function PTStrobePanel({
       }
       const isInsideCluster = (x: number) => clusterRanges.some(([lo, hi]) => x >= lo && x < hi);
 
-      const segCount = Math.ceil(w / segFull) + 4;
+      const segCount = Math.ceil(w / segFull) + PATTERN_LEN;
       const offsetSeg = (phaseRef.current * scale) / segFull;
 
-      for (let i = -4; i < segCount; i++) {
+      for (let i = -PATTERN_LEN; i < segCount; i++) {
+        const segIndex = Math.floor(i - offsetSeg);
+        const mod = (((segIndex % PATTERN_LEN) + PATTERN_LEN) % PATTERN_LEN);
+        const lit = mod < LIT_COUNT;
         const x = i * segFull - ((offsetSeg % 1) * segFull) - segFull;
         if (x > w || x + SEG_W * scale < 0) continue;
         if (!isInsideCluster(x)) continue; // 덩어리 사이 여백 구간은 그리지 않음
+        if (!lit) continue; // 켜짐/꺼짐 패턴이 흐르면서 안쪽 무늬가 옆으로 이동하는 것처럼 보이게 함
 
         if (!isActive || cents === null) {
           ctx.shadowBlur = 0;
