@@ -3,9 +3,9 @@
  * 수동 조율 페이지의 구간/진행 상태 훅
  *
  * 구간 (0-indexed keyIndex):
- *  - middle: 60→27 (1-indexed: 61→28, A5부터 아래로 C3까지)
+ *  - middle: 48→27 (1-indexed: 49→28, A4부터 아래로 C3까지)
  *  - lower:  26→0  (1-indexed: 27→1,  1번~C3)
- *  - upper:  61→87 (1-indexed: 62→88, A5~88번)
+ *  - upper:  49→87 (1-indexed: 50→88, A4# ~ 88번)
  */
 import { useCallback, useMemo, useState } from "react";
 
@@ -22,9 +22,9 @@ function range(start: number, endInclusive: number, step: number): number[] {
 }
 
 export const SECTION_ORDERS: Record<ManualSection, number[]> = {
-  middle: range(60, 27, -1),
+  middle: range(48, 27, -1),
   lower: range(26, 0, -1),
-  upper: range(61, 87, +1),
+  upper: range(49, 87, +1),
 };
 
 export const SECTION_LABELS: Record<ManualSection, string> = {
