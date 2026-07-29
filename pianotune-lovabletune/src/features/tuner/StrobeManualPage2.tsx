@@ -345,7 +345,10 @@ export default function StrobeManualPage2() {
     <div className="min-h-screen bg-muted/50 flex flex-col" style={{ fontFamily: "'Noto Sans KR', sans-serif" }}>
 
       {/* 헤더 */}
-      <header className="bg-card border-b border-border px-4 py-3 flex items-center justify-between shadow-sm">
+      <header
+        className="bg-card border-b border-border px-4 pb-3 flex items-center justify-between shadow-sm"
+        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
+      >
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2">
@@ -376,7 +379,10 @@ export default function StrobeManualPage2() {
         </div>
       </header>
 
-      <main className="flex-1 container max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
+      <main
+        className="flex-1 container max-w-3xl mx-auto px-4 pt-4 flex flex-col gap-3"
+        style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
+      >
 
         {/* ── PT-100 스트로브 + 키패드 (하나의 기기 패널로 통합) ── */}
         <div className="rounded-2xl overflow-hidden border border-black/60 shadow-lg">
