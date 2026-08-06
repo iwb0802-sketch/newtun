@@ -28,6 +28,11 @@ import SpectrumGraph from "@/components/tuner/SpectrumGraph";
 import TuningCurveChart from "@/components/tuner/TuningCurveChart";
 import { exportToPdf, exportToImage } from "@/lib/tuner/exportPdf";
 import { predictB, anomalyRatio, type BPoint } from "@/features/tuner/manual/scaleLearning";
+import {
+  weightedRepeatAverage, pushSample, sampleWeight,
+  REPEAT_MIN_SAMPLES,
+  type CentSample, type RepeatAverageResult,
+} from "@/features/tuner/manual/repeatAverage";
 
 const toast = Object.assign(
   (msg: string, opts?: { duration?: number }) => sonnerToast(msg, opts),
@@ -144,6 +149,15 @@ export default function StrobeManualPage2() {
 
   // ── 스트로브 정밀 엔진 — 복합엔진(YIN+Goertzel+HPS+TWM) + 같은 analyser 공유 ──
   const [lastEngineMeta, setLastEngineMeta] = useState<CompositeResult | null>(null);
+  // ── 반복 측정 가중평균 ────────────────────────────────────────────
+  // 같은 건반을 3회 이상 타건하면, 서로 비슷한 센트 범위(중앙값 ±4¢)에 모인
+  // 회차만 골라 신뢰도 가중평균을 내고 그 값을 조율값으로 자동 입력한다.
+  // 사용자가 +/- 로 직접 만진 뒤에는 자동 입력을 멈춘다(수동 우선).
+  const samplesRef = useRef<CentSample[]>([]);
+  const [repeatAvg, setRepeatAvg] = useState<RepeatAverageResult | null>(null);
+  const [strikeCount, setStrikeCount] = useState(0);
+  const userTouchedRef = useRef(false);
+
   const handleEngineConfirmed = useCallback((r: CompositeResult) => {
     if (r.finalCents === null) return;
     setPendingCents(r.finalCents);
@@ -194,6 +208,102 @@ export default function StrobeManualPage2() {
     if (isFinite(med)) setLiveCents(med);
   }, [liveCentsRaw, isListening]);
 
+  // ── 타건 감지 → 회차별 샘플 누적 ────────────────────────────────
+  // 엔진의 finalCents는 확정 조건이 엄격해서 타건마다 올라오지 않는다.
+  // 그래서 화면에 실제로 흐르고 있는 liveCentsRaw를 직접 보고 "이번 타건의 값"을
+  // 뽑는다: 값이 STRIKE_WINDOW개 연속으로 STRIKE_MAX_SD 안에 안정되면 그 중앙값을
+  // 한 회차로 기록하고, 무음(300ms) 또는 쿨다운(1.5s) 뒤에 다음 회차를 받는다.
+  const STRIKE_WINDOW = 6;      // 안정 판정에 쓰는 연속 프레임 수
+  const STRIKE_MAX_SD = 6.0;    // 이 표준편차 안이면 "안정된 타건" (실측 신호는 원시 YIN이라 흔들림이 큼)
+  const STRIKE_MIN_FRAMES = 4;  // 폴백 기록에 필요한 최소 프레임
+  const STRIKE_TIMEOUT_MS = 600;// 안정 판정이 안 나도 이 시간 소리가 이어지면 그 구간 중앙값을 기록
+  const REARM_SILENCE_MS = 250;
+  const REARM_COOLDOWN_MS = 1200;
+
+  const strikeArmedRef = useRef(true);
+  const strikeWinRef = useRef<number[]>([]);
+  const silenceSinceRef = useRef<number | null>(null);
+  const lastSampleAtRef = useRef(0);
+  const winStartRef = useRef<number | null>(null);
+  // 진단용 — 지금 신호가 얼마나 흔들리는지 화면에 보여준다
+  const [strikeDbg, setStrikeDbg] = useState<{ n: number; sd: number } | null>(null);
+
+  useEffect(() => {
+    if (!isListening) {
+      strikeArmedRef.current = true;
+      strikeWinRef.current = [];
+      winStartRef.current = null;
+      silenceSinceRef.current = null;
+      return;
+    }
+    const now = Date.now();
+
+    // 한 회차를 확정 기록한다 (세 경로에서 공통 사용)
+    const record = (win: number[]) => {
+      const cents = Math.round(median(win) * 10) / 10;
+      strikeArmedRef.current = false;
+      lastSampleAtRef.current = now;
+      strikeWinRef.current = [];
+      winStartRef.current = null;
+
+      samplesRef.current = pushSample(samplesRef.current, {
+        cents,
+        weight: sampleWeight(engineResult?.crossValid ?? false, engineResult?.inharmonicityConfidence ?? null),
+        t: now,
+      });
+      setStrikeCount(samplesRef.current.length);
+
+      const avg = weightedRepeatAverage(samplesRef.current);
+      setRepeatAvg(avg);
+      // 3회 이상 비슷한 범위로 모이면 조율값 칸에 가중평균을 자동 입력
+      if (avg && !userTouchedRef.current) setTargetOffset(avg.value);
+    };
+
+    if (liveCentsRaw === null) {
+      // 소리가 끝났다 — 경로 3: 아직 기록 못 한 구간이 있으면 여기서 확정한다.
+      // 흔들림이 커서 안정 판정이 안 났고 길이도 짧았던 타건을 놓치지 않기 위함.
+      if (strikeArmedRef.current && strikeWinRef.current.length >= STRIKE_MIN_FRAMES) {
+        record(strikeWinRef.current);
+      }
+      if (silenceSinceRef.current === null) silenceSinceRef.current = now;
+      else if (now - silenceSinceRef.current >= REARM_SILENCE_MS) {
+        strikeArmedRef.current = true;
+        strikeWinRef.current = [];
+        winStartRef.current = null;
+      }
+      return;
+    }
+    silenceSinceRef.current = null;
+
+    // 완전 무음이 안 와도 쿨다운이 지나면 다음 회차를 받는다 (연타 대응)
+    if (!strikeArmedRef.current && now - lastSampleAtRef.current >= REARM_COOLDOWN_MS) {
+      strikeArmedRef.current = true;
+      strikeWinRef.current = [];
+      winStartRef.current = null;
+    }
+    if (!strikeArmedRef.current) return;
+
+    const win = strikeWinRef.current;
+    if (win.length === 0) winStartRef.current = now;
+    win.push(liveCentsRaw);
+    if (win.length > STRIKE_WINDOW) win.shift();
+
+    const mean = win.reduce((a, b) => a + b, 0) / win.length;
+    const sd = Math.sqrt(win.reduce((a, b) => a + (b - mean) ** 2, 0) / win.length);
+    setStrikeDbg({ n: win.length, sd: Math.round(sd * 10) / 10 });
+
+    // 경로 1: 값이 충분히 안정됨 → 즉시 기록
+    const stableHit = win.length >= STRIKE_WINDOW && sd <= STRIKE_MAX_SD;
+    // 경로 2: 흔들림이 커도 소리가 STRIKE_TIMEOUT_MS 이상 이어지면 그 구간 중앙값을 기록
+    const timedOut =
+      win.length >= STRIKE_MIN_FRAMES &&
+      winStartRef.current !== null &&
+      now - winStartRef.current >= STRIKE_TIMEOUT_MS;
+    if (!stableHit && !timedOut) return;
+
+    record(win);
+  }, [liveCentsRaw, isListening, engineResult]);
+
   // ── AUTO 모드: 현재 연주 중인 음을 자동 추적해서 targetKeyIndex 갱신 ──
   const [autoMode, setAutoMode] = useState(false);
   const lastAutoKeyRef = useRef<number | null>(null);
@@ -218,14 +328,30 @@ export default function StrobeManualPage2() {
     setTargetOffset(0);
     smoothWindowRef.current = [];
     setLiveCents(null);
+    // 건반이 바뀌면 반복 측정 누적도 새로 시작
+    samplesRef.current = [];
+    setRepeatAvg(null);
+    setStrikeCount(0);
+    userTouchedRef.current = false;
+    strikeArmedRef.current = true;
+    strikeWinRef.current = [];
+    winStartRef.current = null;
   }, [seq.targetKeyIndex]);
 
   const handleReset = useCallback(() => {
     setPendingCents(null);
     setTargetOffset(0);
+    samplesRef.current = [];
+    setRepeatAvg(null);
+    setStrikeCount(0);
+    userTouchedRef.current = false;
+    strikeArmedRef.current = true;
+    strikeWinRef.current = [];
+    winStartRef.current = null;
   }, []);
 
   const handleNudge = useCallback((delta: number) => {
+    userTouchedRef.current = true; // 손으로 만진 순간부터 평균 자동입력 중단
     setTargetOffset(prev => Math.round((prev + delta) * 10) / 10);
   }, []);
 
@@ -313,6 +439,13 @@ export default function StrobeManualPage2() {
     );
     setPendingCents(null);
     setTargetOffset(0);
+    samplesRef.current = [];
+    setRepeatAvg(null);
+    setStrikeCount(0);
+    userTouchedRef.current = false;
+    strikeArmedRef.current = true;
+    strikeWinRef.current = [];
+    winStartRef.current = null;
     seq.next();
   }, [liveCents, displayReadout, seq, ensureSession, recordMeasurement, getBHint, activeProfileId, updateProfileScale]);
 
@@ -448,27 +581,52 @@ export default function StrobeManualPage2() {
                   : "대기 중"}
               </span>
               <button
-                onClick={() => { if (liveCents !== null) setTargetOffset(Math.round(liveCents * 10) / 10); }}
-                disabled={liveCents === null}
+                onClick={() => {
+                  // 3회 이상 모여 가중평균이 나왔으면 그 값을, 아니면 실시간 예측값을 반영
+                  const v = repeatAvg ? repeatAvg.value : liveCents;
+                  if (v === null) return;
+                  userTouchedRef.current = true;
+                  setTargetOffset(Math.round(v * 10) / 10);
+                }}
+                disabled={liveCents === null && repeatAvg === null}
                 className={cn(
                   "flex items-center gap-1 text-right rounded-lg px-1.5 py-0.5 transition-colors",
-                  liveCents !== null ? "hover:bg-precision/10 cursor-pointer" : "cursor-not-allowed"
+                  (liveCents !== null || repeatAvg !== null) ? "hover:bg-precision/10 cursor-pointer" : "cursor-not-allowed"
                 )}
-                title="눌러서 이 값을 바로 반영"
+                title={repeatAvg
+                  ? `${repeatAvg.total}회 중 ${repeatAvg.used}회 채택 가중평균 (편차 ${repeatAvg.spread.toFixed(1)}¢, 허용 ±${repeatAvg.tolerance.toFixed(1)}¢) — 눌러서 반영`
+                  : "눌러서 이 값을 바로 반영"}
               >
                 <span className="text-[9px] text-muted-foreground/60 leading-tight">
-                  예측값<br />클릭 시 반영
+                  {repeatAvg
+                    ? <>{repeatAvg.used}회 평균<br />자동 반영됨</>
+                    : <>예측값<br />클릭 시 반영</>}
                 </span>
                 <span
                   className={cn(
                     "text-xs font-bold tabular-nums",
-                    liveCents !== null ? "text-precision" : "text-muted-foreground/40"
+                    repeatAvg ? "text-in-tune"
+                      : liveCents !== null ? "text-precision"
+                      : "text-muted-foreground/40"
                   )}
                   style={{ fontFamily: "'JetBrains Mono', monospace" }}
                 >
-                  {liveCents !== null ? `${liveCents > 0 ? "+" : ""}${liveCents.toFixed(1)}¢` : "—"}
+                  {repeatAvg
+                    ? `${repeatAvg.value > 0 ? "+" : ""}${repeatAvg.value.toFixed(1)}¢`
+                    : liveCents !== null ? `${liveCents > 0 ? "+" : ""}${liveCents.toFixed(1)}¢` : "—"}
                 </span>
               </button>
+              {/* 타건 회차 / 평균 성립 여부 */}
+              {isListening && (
+                <span className={cn(
+                  "text-[9px] font-bold px-1.5 py-0.5 rounded-full tabular-nums",
+                  repeatAvg ? "bg-in-tune/10 text-in-tune" : "bg-precision/10 text-precision"
+                )}>
+                  {repeatAvg
+                    ? `타건 ${repeatAvg.total}회 · 채택 ${repeatAvg.used}회 · 편차 ${repeatAvg.spread.toFixed(1)}¢ · 허용 ±${repeatAvg.tolerance.toFixed(1)}¢`
+                    : `타건 ${strikeCount}/${REPEAT_MIN_SAMPLES}회 · 비슷한 값 3회 모이면 평균${strikeDbg ? ` · 흔들림 ${strikeDbg.sd}¢(${strikeDbg.n})` : ""}`}
+                </span>
+              )}
               {autoMode && (
                 <span className="text-[10px] font-bold text-in-tune bg-in-tune/10 px-1.5 py-0.5 rounded-full">AUTO 추적 중</span>
               )}
