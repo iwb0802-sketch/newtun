@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/hooks/useAuth";
-import StrobeManualPage from "@/features/tuner/StrobeManualPage";
+import NewTabPage from "@/features/tuner/newtab/NewTabPage";
 import AuthPage from "@/features/tuner/AuthPage";
 
 function IndexPage() {
@@ -21,7 +21,7 @@ function IndexPage() {
     return <AuthPage />;
   }
 
-  return <StrobeManualPage />;
+  return <NewTabPage />;
 }
 
 export const Route = createFileRoute("/")({
